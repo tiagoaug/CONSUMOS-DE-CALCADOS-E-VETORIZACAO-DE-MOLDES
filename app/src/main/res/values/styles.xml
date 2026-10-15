@@ -4,7 +4,10 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowBackground">#FFF1F5F9</item>
+        <item name="android:windowBackground">@drawable/splash_screen</item>
         <item name="android:colorAccent">#4F46E5</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/editor_facas_blue</item>
+        <item name="android:navigationBarColor">@color/editor_facas_blue</item>
     </style>
 </resources>
