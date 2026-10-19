@@ -6,3 +6,5 @@ local.properties
 *.jks
 *.keystore
 keystore.properties
+.gradle-user-home/
+.android-user-home/

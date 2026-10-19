@@ -6,11 +6,12 @@ import org.opencv.objdetect.ArucoDetector
 import org.opencv.objdetect.Objdetect
 
 /** Marcador de referência usado pra corrigir escala/perspectiva — DICT_4X4_50, impresso em
- * 5 cm (decisão confirmada com o Tiago). API verificada contra o jar real baixado
+ * 10 cm. A medida corresponde ao quadrado preto detectado, sem margem branca externa. API
+ * verificada contra o jar real baixado
  * (org.opencv:opencv:4.10.0) com `javap`, não documentação — este projeto não tem como
  * compilar/testar OpenCV de outra forma além do build real do Gradle. */
 object MarcadorAruco {
-    const val TAMANHO_MM = 50.0
+    const val TAMANHO_MM = 100.0
 }
 
 data class MarcadorDetectado(

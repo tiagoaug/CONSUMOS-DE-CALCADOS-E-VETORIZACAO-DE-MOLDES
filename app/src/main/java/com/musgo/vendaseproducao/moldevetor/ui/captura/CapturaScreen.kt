@@ -195,7 +195,7 @@ fun CapturaScreen(
 
                     val marcador = ArucoMarkerDetector.detectar(imagem)
                         ?: return@withContext Result.failure<EstadoCaptura.MarcarArea>(
-                            IllegalStateException("Marcador ArUco não encontrado. Aproxime a câmera e garanta que o marcador de 5 cm esteja visível e bem iluminado."),
+                            IllegalStateException("Marcador ArUco não encontrado. Aproxime a câmera e garanta que o marcador de 10 cm esteja visível e bem iluminado."),
                         )
 
                     val corrigida = PerspectiveCorrector.corrigir(imagem, marcador.cantosPx)
@@ -265,7 +265,7 @@ fun CapturaScreen(
                             .padding(24.dp),
                     ) {
                         Text(
-                            text = "Posicione o marcador ArUco (5 cm) e a faca dentro da guia, com boa iluminação, e toque em Capturar.",
+                            text = "Posicione o marcador ArUco (10 × 10 cm) e a faca dentro da guia, com boa iluminação, e toque em Capturar.",
                             color = Color.White,
                         )
                         Button(

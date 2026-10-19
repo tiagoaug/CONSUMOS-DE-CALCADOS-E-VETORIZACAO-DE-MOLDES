@@ -12,13 +12,14 @@ import org.opencv.imgproc.Imgproc
  * milímetros sem mais nenhuma conversão de escala depois disso. Pressupõe que a faca está no
  * MESMO plano do marcador (mesa plana) — mesma premissa da especificação, seção 4 passo 1. */
 object PerspectiveCorrector {
-    /** 5 px por milímetro — resolução suficiente pra contornos de faca de calçado sem gerar
-     * uma imagem gigante/lenta de processar no aparelho. */
-    const val PX_POR_MM = 5.0
+    /** 2,5 px por milímetro. Com o marcador físico de 100 mm, ele ocupa 250 px na imagem
+     * retificada — a mesma resolução em pixels usada anteriormente, agora com a escala física
+     * correta e sem aumentar o consumo de memória. */
+    const val PX_POR_MM = 2.5
 
-    /** Lado da imagem de saída, em mm — 300mm (30cm) cobre qualquer faca de calçado razoável
-     * ao lado do marcador de 5cm. */
-    const val LADO_SAIDA_MM = 300.0
+    /** Campo físico de 600 mm. Multiplicado por [PX_POR_MM], mantém a imagem de saída em
+     * 1500 × 1500 px e evita cortar peças posicionadas ao lado do marcador de 100 mm. */
+    const val LADO_SAIDA_MM = 600.0
 
     data class Resultado(val imagemCorrigida: Mat, val pxPorMm: Double)
 

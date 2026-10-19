@@ -61,7 +61,7 @@ object ContornoExtractor {
         // O marcador ArUco (preto e branco, altíssimo contraste) fica ancorado no canto
         // superior esquerdo da imagem corrigida (ver PerspectiveCorrector.corrigir) — e
         // normalmente vem impresso numa folha com instruções/texto ao redor dele, não só o
-        // quadrado de 5cm puro. Sem mascarar essa região, o próprio marcador (ou o texto da
+        // quadrado de 10cm puro. Sem mascarar essa região, o próprio marcador (ou o texto da
         // folha) vira a borda de maior destaque da imagem inteira, maior até que o objeto real
         // — mascara uma área 3x o lado do marcador (cobre a folha sem precisar saber o tamanho
         // exato dela) preenchendo de branco, que não gera nenhuma borda.

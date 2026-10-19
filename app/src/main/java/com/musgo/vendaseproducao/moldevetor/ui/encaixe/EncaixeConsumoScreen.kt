@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -75,21 +76,25 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -127,6 +132,7 @@ private val Fundo = Color.White
 private val Borda = Color(0xFFE2E8F0)
 private val Texto = Color(0xFF1E293B)
 private val CoresBlocos = listOf(Color(0xFF22C55E), Color(0xFF2563EB), Color(0xFFF59E0B), Color(0xFF0D9488))
+private val LocalFerramentasCompactas = staticCompositionLocalOf { false }
 
 private data class BlocoBase(val pontos: List<Offset>, val largura: Float, val altura: Float)
 private data class LimitesBloco(val esquerda: Float, val topo: Float, val direita: Float, val base: Float) {
@@ -274,7 +280,11 @@ fun EncaixeConsumoScreen(
     // troca o empilhamento vertical (prancheta em cima, ferramentas embaixo) por lado a lado.
     val context = LocalContext.current
     val activity = remember(context) { context.paraActivityEncaixe() }
+    val density = LocalDensity.current
     var telaGirada by remember { mutableStateOf(false) }
+    var fracaoVisualizacaoPaisagem by remember { mutableStateOf(0.64f) }
+    var tamanhoAreaPaisagem by remember { mutableStateOf(IntSize.Zero) }
+    var painelFerramentasCompacto by remember { mutableStateOf(false) }
     LaunchedEffect(telaGirada, activity) {
         activity?.requestedOrientation = if (telaGirada) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
@@ -804,6 +814,7 @@ fun EncaixeConsumoScreen(
 
     Scaffold(
         containerColor = Fundo,
+        contentWindowInsets = if (telaGirada) WindowInsets(0, 0, 0, 0) else ScaffoldDefaults.contentWindowInsets,
         topBar = {
             if (!telaGirada) {
             // statusBarsPadding — pedido do Tiago: "abaixar um pouco o cabeçalho, estou com
@@ -827,6 +838,20 @@ fun EncaixeConsumoScreen(
                             )
                         }
                     }
+                    Surface(
+                        modifier = Modifier.size(42.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFFEFF6FF),
+                    ) {
+                        IconButton(onClick = { telaGirada = true }) {
+                            Icon(
+                                Icons.Filled.ScreenRotation,
+                                contentDescription = "Girar para horizontal",
+                                tint = AzulDestaque,
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
                 }
             }
             }
@@ -1093,21 +1118,40 @@ fun EncaixeConsumoScreen(
             // extraído numa lambda parametrizada por Modifier (ver conteudoPrancheta acima) pra
             // poder virar a coluna lateral de ferramentas no modo "tela girada".
             val conteudoFerramentasEncaixe: @Composable (Modifier) -> Unit = { modFerramentas ->
-            Column(modifier = modFerramentas) {
+            CompositionLocalProvider(LocalFerramentasCompactas provides painelFerramentasCompacto) {
+            Column(
+                modifier = modFerramentas.onSizeChanged { tamanho ->
+                    painelFerramentasCompacto = tamanho.width < with(density) { 280.dp.roundToPx() }
+                },
+            ) {
             Surface(
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(start = 4.dp, end = 4.dp, top = 4.dp),
+                shape = RoundedCornerShape(18.dp),
                 color = Color.White,
                 border = androidx.compose.foundation.BorderStroke(1.dp, Borda),
             ) {
-                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Column(
+                    modifier = Modifier.padding(
+                        horizontal = if (painelFerramentasCompacto) 6.dp else 12.dp,
+                        vertical = if (painelFerramentasCompacto) 4.dp else 8.dp,
+                    ),
+                ) {
                     // Duas linhas fixas de categorias: não há rolagem horizontal nem títulos
                     // cortados nas laterais.
                     FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color.White),
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFFF8FAFC))
+                            .border(1.dp, Borda, RoundedCornerShape(14.dp))
+                            .padding(4.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
+                        // A navegacao permanece fixa em duas linhas por tres categorias,
+                        // independentemente da largura escolhida para o painel lateral.
                         maxItemsInEachRow = 3,
                     ) {
                         CategoriaEncaixe.entries.forEach { cat ->
@@ -1119,10 +1163,17 @@ fun EncaixeConsumoScreen(
                                 CategoriaEncaixe.RESULTADO -> "Resultado"
                                 CategoriaEncaixe.CONFIGURACOES -> "Config."
                             }
-                            val icone = if (cat == CategoriaEncaixe.CONFIGURACOES) Icons.Filled.Settings else null
+                            val icone = when (cat) {
+                                CategoriaEncaixe.BLOCOS -> Icons.Filled.ViewModule
+                                CategoriaEncaixe.SELECAO -> Icons.Filled.CropFree
+                                CategoriaEncaixe.TRANSFORMAR -> Icons.Filled.OpenWith
+                                CategoriaEncaixe.VISUALIZACAO -> Icons.Filled.PanTool
+                                CategoriaEncaixe.RESULTADO -> Icons.Filled.CheckBox
+                                CategoriaEncaixe.CONFIGURACOES -> Icons.Filled.Settings
+                            }
                             Row(
                                 modifier = Modifier.weight(1f)
-                                    .height(34.dp)
+                                    .height(if (painelFerramentasCompacto) 28.dp else 34.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(if (categoria == cat) AzulDestaque else Fundo)
                                     .clickable {
@@ -1139,17 +1190,26 @@ fun EncaixeConsumoScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center,
                             ) {
-                                if (icone != null) {
-                                    Icon(icone, contentDescription = null, tint = if (categoria == cat) Color.White else Texto, modifier = Modifier.size(14.dp))
+                                // No painel estreito, o texto sozinho evita que os nomes das
+                                // categorias sejam espremidos, sem transformar a barra em coluna.
+                                if (!painelFerramentasCompacto) {
+                                    Icon(icone, contentDescription = null, tint = if (categoria == cat) Color.White else Texto, modifier = Modifier.size(if (painelFerramentasCompacto) 12.dp else 14.dp))
+                                    Spacer(modifier = Modifier.width(2.dp))
                                 }
-                                Text(titulo, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = if (categoria == cat) Color.White else Texto, maxLines = 1)
+                                Text(
+                                    titulo,
+                                    fontSize = if (painelFerramentasCompacto) 8.sp else 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (categoria == cat) Color.White else Texto,
+                                    maxLines = 1,
+                                )
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(if (painelFerramentasCompacto) 5.dp else 8.dp))
                     Column(
                         modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (painelFerramentasCompacto) 5.dp else 8.dp),
                     ) {
                         when (categoria) {
                             CategoriaEncaixe.BLOCOS -> {
@@ -1158,7 +1218,7 @@ fun EncaixeConsumoScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    maxItemsInEachRow = 3,
+                                    maxItemsInEachRow = if (painelFerramentasCompacto) 1 else 3,
                                 ) {
                                     blocos.indices.forEach { indice ->
                                         CartaoFerramenta("Bloco ${indice + 1}", blocoParaAdicionar == indice, Modifier) { blocoParaAdicionar = indice }
@@ -1190,7 +1250,12 @@ fun EncaixeConsumoScreen(
                                     fontSize = 10.sp,
                                     color = Texto.copy(alpha = 0.7f),
                                 )
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                                    maxItemsInEachRow = if (painelFerramentasCompacto) 1 else 2,
+                                ) {
                                     CartaoFerramenta(
                                         "Multiseleção",
                                         modoSelecaoEncaixe == ModoSelecaoEncaixe.MULTI_TOQUE,
@@ -1234,14 +1299,31 @@ fun EncaixeConsumoScreen(
                             }
                             CategoriaEncaixe.VISUALIZACAO -> {
                                 Text("Mova a prancheta livremente ou amplie pra ajustar com mais precisão — pedido do Tiago: ferramentas de visualização iguais às do editor de facas.", fontSize = 10.sp, color = Texto.copy(alpha = 0.7f))
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                                    maxItemsInEachRow = if (painelFerramentasCompacto) 1 else 2,
+                                ) {
                                     CartaoFerramenta("Mover peça", !modoZoomCanvas, Modifier.weight(1f), icone = Icons.Filled.OpenWith) { modoZoomCanvas = false }
                                     CartaoFerramenta("Pan / Zoom", modoZoomCanvas, Modifier.weight(1f), icone = Icons.Filled.PanTool) { modoZoomCanvas = true }
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    CartaoFerramenta("Diminuir", false, Modifier.weight(1f), icone = Icons.Filled.ZoomOut) { zoomCanvas = (zoomCanvas - 0.5f).coerceAtLeast(1f) }
-                                    Text("${(zoomCanvas * 100).roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Texto)
-                                    CartaoFerramenta("Aumentar", false, Modifier.weight(1f), icone = Icons.Filled.ZoomIn) { zoomCanvas = (zoomCanvas + 0.5f).coerceAtMost(6f) }
+                                if (painelFerramentasCompacto) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                                    ) {
+                                        CartaoFerramenta("Diminuir zoom", false, Modifier.fillMaxWidth(), icone = Icons.Filled.ZoomOut) { zoomCanvas = (zoomCanvas - 0.5f).coerceAtLeast(1f) }
+                                        Text("${(zoomCanvas * 100).roundToInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Texto)
+                                        CartaoFerramenta("Aumentar zoom", false, Modifier.fillMaxWidth(), icone = Icons.Filled.ZoomIn) { zoomCanvas = (zoomCanvas + 0.5f).coerceAtMost(6f) }
+                                    }
+                                } else {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        CartaoFerramenta("Diminuir", false, Modifier.weight(1f), icone = Icons.Filled.ZoomOut) { zoomCanvas = (zoomCanvas - 0.5f).coerceAtLeast(1f) }
+                                        Text("${(zoomCanvas * 100).roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Texto)
+                                        CartaoFerramenta("Aumentar", false, Modifier.weight(1f), icone = Icons.Filled.ZoomIn) { zoomCanvas = (zoomCanvas + 0.5f).coerceAtMost(6f) }
+                                    }
                                 }
                                 CartaoFerramenta("Resetar zoom e posição", false, Modifier.fillMaxWidth(), icone = Icons.Filled.RestartAlt) { zoomCanvas = 1f; panCanvas = Offset.Zero }
                             }
@@ -1364,12 +1446,14 @@ fun EncaixeConsumoScreen(
                                 }
                             }
                             CategoriaEncaixe.CONFIGURACOES -> {
-                                CartaoFerramenta(
-                                    if (telaGirada) "Voltar ao retrato" else "Girar tela",
-                                    telaGirada,
-                                    Modifier.fillMaxWidth(),
-                                    icone = Icons.Filled.ScreenRotation,
-                                ) { telaGirada = !telaGirada }
+                                if (telaGirada) {
+                                    CartaoFerramenta(
+                                        "Voltar ao retrato",
+                                        true,
+                                        Modifier.fillMaxWidth(),
+                                        icone = Icons.Filled.ScreenRotation,
+                                    ) { telaGirada = false }
+                                }
                                 CabecalhoSecaoEncaixe(Icons.Filled.ViewModule, "Tipo de módulo", "Retângulo ou paralelogramo")
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     CartaoFerramenta("Retângulo", tipo == TipoModuloEncaixe.RETANGULO, Modifier.weight(1f), icone = Icons.Filled.CropSquare) { tipo = TipoModuloEncaixe.RETANGULO }
@@ -1523,10 +1607,15 @@ fun EncaixeConsumoScreen(
             ) { Text(if (salvando) "Salvando..." else "✓ Salvar encaixe e consumo", fontWeight = FontWeight.Bold) }
             }
             }
+            }
 
             if (telaGirada) {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onSizeChanged { tamanhoAreaPaisagem = it },
+                ) {
+                    Column(modifier = Modifier.weight(fracaoVisualizacaoPaisagem).fillMaxHeight()) {
                         Surface(color = Color.White, shadowElevation = 2.dp) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 6.dp),
@@ -1553,7 +1642,39 @@ fun EncaixeConsumoScreen(
                         }
                         conteudoPrancheta(Modifier.weight(1f).fillMaxWidth())
                     }
-                    conteudoFerramentasEncaixe(Modifier.width(300.dp).fillMaxHeight())
+                    Box(
+                        modifier = Modifier
+                            .width(12.dp)
+                            .fillMaxHeight()
+                            .background(Color(0xFFF8FAFC))
+                            .pointerInput(tamanhoAreaPaisagem.width) {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    val larguraUtil = tamanhoAreaPaisagem.width.toFloat().coerceAtLeast(1f)
+                                    val minimoVisual = (with(density) { 320.dp.toPx() } / larguraUtil)
+                                        .coerceIn(0.45f, 0.68f)
+                                    val maximoVisual = (1f - with(density) { 190.dp.toPx() } / larguraUtil)
+                                        .coerceIn(minimoVisual, 0.82f)
+                                    fracaoVisualizacaoPaisagem = (
+                                        fracaoVisualizacaoPaisagem + dragAmount.x / larguraUtil
+                                    ).coerceIn(minimoVisual, maximoVisual)
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(4.dp)
+                                .height(58.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(if (painelFerramentasCompacto) AzulDestaque else Color(0xFF94A3B8)),
+                        )
+                    }
+                    conteudoFerramentasEncaixe(
+                        Modifier
+                            .weight(1f - fracaoVisualizacaoPaisagem)
+                            .fillMaxHeight(),
+                    )
                 }
             } else {
                 conteudoPrancheta(Modifier.height(280.dp).fillMaxWidth())
@@ -1665,6 +1786,7 @@ private fun SeletorPassoTransformacao(
     onPassoMovimentoChange: (Float) -> Unit,
     onPassoRotacaoChange: (Float) -> Unit,
 ) {
+    val compacto = LocalFerramentasCompactas.current
     val valor = if (moverAtivo) passoMovimentoMm else passoRotacaoGraus
     val incremento = if (moverAtivo) 0.1f else 1f
     val minimo = if (moverAtivo) 0.1f else 1f
@@ -1678,24 +1800,13 @@ private fun SeletorPassoTransformacao(
         val ajustado = novo.coerceIn(minimo, maximo)
         if (moverAtivo) onPassoMovimentoChange(ajustado) else onPassoRotacaoChange(ajustado)
     }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            if (moverAtivo) "Distância por toque" else "Graus por toque",
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = Texto.copy(alpha = 0.68f),
-            modifier = Modifier.width(108.dp),
-        )
+    val controles: @Composable () -> Unit = {
         IconButton(
             onClick = { atualizar(valor - incremento) },
-            modifier = Modifier.size(36.dp).clip(CircleShape).background(Color.White).border(1.dp, Borda, CircleShape),
+            modifier = Modifier.size(if (compacto) 32.dp else 36.dp).clip(CircleShape).background(Color.White).border(1.dp, Borda, CircleShape),
         ) { Icon(Icons.Filled.Remove, contentDescription = "Diminuir passo", tint = Texto, modifier = Modifier.size(16.dp)) }
         Surface(
-            modifier = Modifier.padding(horizontal = 6.dp).width(78.dp).height(36.dp),
+            modifier = Modifier.padding(horizontal = 6.dp).width(if (compacto) 68.dp else 78.dp).height(if (compacto) 32.dp else 36.dp),
             shape = RoundedCornerShape(12.dp),
             color = Fundo,
             border = androidx.compose.foundation.BorderStroke(1.dp, Borda),
@@ -1706,8 +1817,38 @@ private fun SeletorPassoTransformacao(
         }
         IconButton(
             onClick = { atualizar(valor + incremento) },
-            modifier = Modifier.size(36.dp).clip(CircleShape).background(Color.White).border(1.dp, Borda, CircleShape),
+            modifier = Modifier.size(if (compacto) 32.dp else 36.dp).clip(CircleShape).background(Color.White).border(1.dp, Borda, CircleShape),
         ) { Icon(Icons.Filled.Add, contentDescription = "Aumentar passo", tint = Texto, modifier = Modifier.size(16.dp)) }
+    }
+    if (compacto) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                if (moverAtivo) "Distância por toque" else "Graus por toque",
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                color = Texto.copy(alpha = 0.68f),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) { controles() }
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                if (moverAtivo) "Distância por toque" else "Graus por toque",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = Texto.copy(alpha = 0.68f),
+                modifier = Modifier.width(108.dp),
+            )
+            controles()
+        }
     }
 }
 
@@ -1803,31 +1944,51 @@ private fun CartaoFerramenta(
     habilitado: Boolean = true,
     onClick: () -> Unit,
 ) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (ativo) cor.copy(alpha = 0.16f) else Fundo)
-            .clickable(enabled = habilitado, onClick = onClick)
-            .padding(vertical = 8.dp, horizontal = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        if (icone != null) {
-            Icon(
-                icone,
-                contentDescription = null,
-                tint = if (!habilitado) Texto.copy(alpha = 0.3f) else if (ativo) cor else cor.copy(alpha = 0.85f),
-                modifier = Modifier.size(16.dp),
+    val compacto = LocalFerramentasCompactas.current
+    val modificadorBase = modifier
+        .clip(RoundedCornerShape(if (compacto) 9.dp else 12.dp))
+        .background(if (ativo) cor.copy(alpha = 0.16f) else Fundo)
+        .clickable(enabled = habilitado, onClick = onClick)
+    val corConteudo = if (!habilitado) Texto.copy(alpha = 0.3f) else if (ativo) cor else Color(0xFF1E3A8A)
+    val corIcone = if (!habilitado) Texto.copy(alpha = 0.3f) else if (ativo) cor else cor.copy(alpha = 0.85f)
+
+    if (compacto) {
+        Row(
+            modifier = modificadorBase.padding(vertical = 5.dp, horizontal = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            if (icone != null) {
+                Icon(icone, contentDescription = null, tint = corIcone, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(3.dp))
+            }
+            Text(
+                titulo,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Medium,
+                color = corConteudo,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
             )
         }
-        Text(
-            titulo,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Medium,
-            color = if (!habilitado) Texto.copy(alpha = 0.3f) else if (ativo) cor else Color(0xFF1E3A8A),
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-        )
+    } else {
+        Column(
+            modifier = modificadorBase.padding(vertical = 8.dp, horizontal = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            if (icone != null) {
+                Icon(icone, contentDescription = null, tint = corIcone, modifier = Modifier.size(16.dp))
+            }
+            Text(
+                titulo,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = corConteudo,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -1837,18 +1998,19 @@ private fun CartaoFerramenta(
  * nesta leva: "ajuste fino") botões −1/+1mm pra quem prefere afinar sem digitar. */
 @Composable
 private fun LinhaDimensao(titulo: String, valorTexto: String, onAjusteFino: (Float) -> Unit = {}, onValorChange: (String) -> Unit) {
+    val compacto = LocalFerramentasCompactas.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
+            .height(if (compacto) 44.dp else 50.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Fundo)
             .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(titulo, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Texto, modifier = Modifier.weight(1f))
-        IconButton(onClick = { onAjusteFino(-1f) }, modifier = Modifier.size(30.dp)) {
+        Text(titulo, fontSize = if (compacto) 9.sp else 11.sp, fontWeight = FontWeight.Bold, color = Texto, modifier = Modifier.weight(1f), maxLines = 1)
+        IconButton(onClick = { onAjusteFino(-1f) }, modifier = Modifier.size(if (compacto) 26.dp else 30.dp)) {
             Icon(Icons.Filled.Remove, contentDescription = "Diminuir 1mm", modifier = Modifier.size(14.dp))
         }
         OutlinedTextField(
@@ -1858,9 +2020,9 @@ private fun LinhaDimensao(titulo: String, valorTexto: String, onAjusteFino: (Flo
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = Texto),
-            modifier = Modifier.width(108.dp).height(44.dp),
+            modifier = Modifier.width(if (compacto) 82.dp else 108.dp).height(if (compacto) 40.dp else 44.dp),
         )
-        IconButton(onClick = { onAjusteFino(1f) }, modifier = Modifier.size(30.dp)) {
+        IconButton(onClick = { onAjusteFino(1f) }, modifier = Modifier.size(if (compacto) 26.dp else 30.dp)) {
             Icon(Icons.Filled.Add, contentDescription = "Aumentar 1mm", modifier = Modifier.size(14.dp))
         }
     }
