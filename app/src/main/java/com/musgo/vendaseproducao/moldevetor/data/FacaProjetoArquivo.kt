@@ -20,6 +20,7 @@ internal data class ManifestoProjetoFaca(
     val exportadoEm: Long,
     val codigo: String,
     val nome: String,
+    val grupoModeloNome: String? = null,
     val referenciaModelo: String? = null,
     val observacoes: String? = null,
     val status: String,
@@ -58,7 +59,7 @@ internal object FacaProjetoArquivo {
         ignoreUnknownKeys = true
     }
 
-    fun escrever(faca: FacaMoldeEntity, destino: OutputStream) {
+    fun escrever(faca: FacaMoldeEntity, destino: OutputStream, grupoModeloNome: String? = null) {
         val foto = faca.fotoPath?.let(::File)?.takeIf { it.isFile && it.canRead() }
         val extensao = foto?.extension?.lowercase()?.takeIf { it.matches(Regex("[a-z0-9]{1,5}")) } ?: "jpg"
         val nomeFoto = foto?.let { "foto.$extensao" }
@@ -66,6 +67,7 @@ internal object FacaProjetoArquivo {
             exportadoEm = System.currentTimeMillis(),
             codigo = faca.codigo,
             nome = faca.nome,
+            grupoModeloNome = grupoModeloNome,
             referenciaModelo = faca.referenciaModelo,
             observacoes = faca.observacoes,
             status = faca.status,

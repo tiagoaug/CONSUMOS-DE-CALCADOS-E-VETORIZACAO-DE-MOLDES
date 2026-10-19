@@ -166,9 +166,9 @@ private fun rotuloModo(modo: ModoEdicao): String = when (modo) {
 }
 
 // Paleta do "estilo moderno" já usado em outras partes do app (ver o modal de ferramentas do
-// editor de etiquetas) — fundo cinza-claro nos itens, destaque roxo-claro quando ativo.
+// editor de etiquetas) — superfícies brancas e destaque azul-claro quando ativo.
 private val CorBrancoPuro = Color(0xFFFFFFFF)
-private val CorFundoEditor = Color(0xFFF4F6F8)
+private val CorFundoEditor = Color(0xFFFFFFFF)
 private val CorBordaPaleta = Color(0xFFE2E8F0)
 private val CorFundoCartaoItem = Color(0xFFFFFFFF)
 private val CorFundoCartaoItemAtivo = Color(0xFFE0EAFF)
@@ -176,7 +176,7 @@ private val CorDestaque = Color(0xFF2563EB)
 private val CorTextoItem = Color(0xFF1E293B)
 private val CoresGeometria = listOf(
     Color(0xFF22C55E), Color(0xFF2563EB), Color(0xFFDC2626), Color(0xFFF59E0B),
-    Color(0xFF9333EA), Color(0xFF0D9488), Color(0xFFEC4899), Color(0xFF334155),
+    Color(0xFF0891B2), Color(0xFF0D9488), Color(0xFFF97316), Color(0xFF334155),
 )
 
 /** Validação visual do contorno detectado — layout fixo em duas partes: a área de visualização
@@ -903,7 +903,7 @@ fun ValidacaoContornoScreen(
                                     .background(if (pretoEBranco) CorFundoCartaoItemAtivo else CorFundoEditor)
                                     .border(
                                         width = if (pretoEBranco) 1.5.dp else 1.dp,
-                                        color = if (pretoEBranco) Color(0xFF7C3AED).copy(alpha = 0.45f) else CorBordaPaleta,
+                                        color = if (pretoEBranco) Color(0xFF2563EB).copy(alpha = 0.45f) else CorBordaPaleta,
                                         shape = RoundedCornerShape(14.dp),
                                     ),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -920,7 +920,7 @@ fun ValidacaoContornoScreen(
                                     Icon(
                                         imageVector = Icons.Filled.ColorLens,
                                         contentDescription = "Preto e branco",
-                                        tint = Color(0xFF7C3AED),
+                                        tint = Color(0xFF2563EB),
                                         modifier = Modifier.size(19.dp),
                                     )
                                     Spacer(modifier = Modifier.height(1.dp))
@@ -962,7 +962,7 @@ fun ValidacaoContornoScreen(
                                     icone = Icons.Filled.CropFree,
                                     titulo = "Zoom por área",
                                     selecionado = zoomPorArea,
-                                    cor = Color(0xFF7C3AED),
+                                    cor = Color(0xFF2563EB),
                                     modifier = Modifier.weight(1f),
                                 ) { zoomPorArea = true }
                                 CardOpcaoVisualizacao(
@@ -1541,8 +1541,8 @@ fun ValidacaoContornoScreen(
                                         moveTo(pA.x, pA.y)
                                         quadraticTo(pControle.x, pControle.y, pB.x, pB.y)
                                     }
-                                    drawPath(caminhoPreview, color = Color(0xFFEC4899), style = Stroke(width = 4f / zoom))
-                                    drawCircle(color = Color(0xFFEC4899), radius = 8f / zoom, center = pControle)
+                                    drawPath(caminhoPreview, color = Color(0xFFF97316), style = Stroke(width = 4f / zoom))
+                                    drawCircle(color = Color(0xFFF97316), radius = 8f / zoom, center = pControle)
                                 }
                                 // Linha da régua — pedido do Tiago: "régua de medição, entre
                                 // pontos". Desenhada DENTRO do pan/zoom, acompanha o conteúdo.
@@ -1700,8 +1700,8 @@ fun ValidacaoContornoScreen(
                                             moveTo(pA.x, pA.y)
                                             quadraticTo(pControle.x, pControle.y, pB.x, pB.y)
                                         }
-                                        drawPath(caminhoPreviewLupa, color = Color(0xFFEC4899), style = Stroke(width = 4f / zoomLupa))
-                                        drawCircle(color = Color(0xFFEC4899), radius = 8f / zoomLupa, center = pControle)
+                                        drawPath(caminhoPreviewLupa, color = Color(0xFFF97316), style = Stroke(width = 4f / zoomLupa))
+                                        drawCircle(color = Color(0xFFF97316), radius = 8f / zoomLupa, center = pControle)
                                     }
                                 }
                             }
@@ -2403,7 +2403,7 @@ private fun PaletaCategoriasHorizontais(
                 when (categoriaAtiva) {
                     CategoriaPaleta.SELECAO -> {
                         BotaoIconePaleta(Icons.Filled.OpenWith, "Mover", modo == ModoEdicao.MOVER, cor = Color(0xFFF59E0B), onLongPress = { onSelecionarModo(ModoEdicao.MOVER) }) { onSelecionarModo(ModoEdicao.MOVER) }
-                        BotaoIconePaleta(Icons.Filled.CropFree, "Selecionar área", modo == ModoEdicao.SELECIONAR, cor = Color(0xFF7C3AED), onLongPress = { onSelecionarModo(ModoEdicao.SELECIONAR) }) { onSelecionarModo(ModoEdicao.SELECIONAR) }
+                        BotaoIconePaleta(Icons.Filled.CropFree, "Selecionar área", modo == ModoEdicao.SELECIONAR, cor = Color(0xFF0D9488), onLongPress = { onSelecionarModo(ModoEdicao.SELECIONAR) }) { onSelecionarModo(ModoEdicao.SELECIONAR) }
                         BotaoIconePaleta(Icons.Filled.TouchApp, "Selecionar por toque", modo == ModoEdicao.SELECIONAR_TOQUE, cor = Color(0xFF2563EB), onLongPress = { onSelecionarModo(ModoEdicao.SELECIONAR_TOQUE) }) { onSelecionarModo(ModoEdicao.SELECIONAR_TOQUE) }
                         BotaoIconePaleta(Icons.Filled.Swipe, "Selecionar por arrasto", modo == ModoEdicao.SELECIONAR_PINCEL, cor = Color(0xFF0891B2), onLongPress = { onSelecionarModo(ModoEdicao.SELECIONAR_PINCEL) }) { onSelecionarModo(ModoEdicao.SELECIONAR_PINCEL) }
                         BotaoIconePaleta(Icons.Filled.Add, "Adicionar nó", modo == ModoEdicao.ADICIONAR, cor = Color(0xFF16A34A), onLongPress = { onSelecionarModo(ModoEdicao.ADICIONAR) }) { onSelecionarModo(ModoEdicao.ADICIONAR) }
@@ -2413,13 +2413,13 @@ private fun PaletaCategoriasHorizontais(
                         BotaoIconePaleta(Icons.Filled.LinearScale, "Régua (reta entre pontos)", modo == ModoEdicao.MEDIR_RETA, cor = Color(0xFFCA8A04), onLongPress = { onSelecionarModo(ModoEdicao.MEDIR_RETA) }) { onSelecionarModo(ModoEdicao.MEDIR_RETA) }
                     }
                     CategoriaPaleta.TRANSFORMAR -> {
-                        BotaoIconePaleta(Icons.AutoMirrored.Filled.Undo, "Desfazer", false, habilitado = podeDesfazer, cor = Color(0xFF4F46E5), onClick = onDesfazer)
-                        BotaoIconePaleta(Icons.AutoMirrored.Filled.Redo, "Refazer", false, habilitado = podeRefazer, cor = Color(0xFF4F46E5), onClick = onRefazer)
+                        BotaoIconePaleta(Icons.AutoMirrored.Filled.Undo, "Desfazer", false, habilitado = podeDesfazer, cor = Color(0xFF2563EB), onClick = onDesfazer)
+                        BotaoIconePaleta(Icons.AutoMirrored.Filled.Redo, "Refazer", false, habilitado = podeRefazer, cor = Color(0xFF2563EB), onClick = onRefazer)
                         BotaoIconePaleta(Icons.Filled.CenterFocusStrong, "Recalcular", false, habilitado = !recalculando, cor = Color(0xFF0D9488), onClick = onRecalcular)
-                        BotaoIconePaleta(Icons.Filled.AutoAwesome, if (usarIA) "IA ligada (Recalcular usa Claude)" else "IA desligada (Recalcular usa OpenCV)", usarIA, cor = Color(0xFF9333EA), onClick = { onUsarIAChange(!usarIA) })
+                        BotaoIconePaleta(Icons.Filled.AutoAwesome, if (usarIA) "IA ligada (Recalcular usa Claude)" else "IA desligada (Recalcular usa OpenCV)", usarIA, cor = Color(0xFF0891B2), onClick = { onUsarIAChange(!usarIA) })
                         BotaoIconePaleta(Icons.Filled.Refresh, "Restaurar original", false, cor = Color(0xFF2563EB), onClick = onResetarOriginal)
-                        BotaoIconePaleta(Icons.Filled.Flip, "Espelhar horizontal", false, cor = Color(0xFF9333EA), onClick = onEspelharH)
-                        BotaoIconePaleta(Icons.Filled.SwapVert, "Espelhar vertical", false, cor = Color(0xFF9333EA), onClick = onEspelharV)
+                        BotaoIconePaleta(Icons.Filled.Flip, "Espelhar horizontal", false, cor = Color(0xFF0891B2), onClick = onEspelharH)
+                        BotaoIconePaleta(Icons.Filled.SwapVert, "Espelhar vertical", false, cor = Color(0xFF0891B2), onClick = onEspelharV)
                         BotaoIconePaleta(Icons.Filled.RotateLeft, "Girar à esquerda", false, cor = Color(0xFFF97316), onClick = onGirarEsquerda)
                         BotaoIconePaleta(Icons.Filled.RotateRight, "Girar à direita", false, cor = Color(0xFFF97316), onClick = onGirarDireita)
                         BotaoIconePaleta(Icons.Filled.SwapVert, "Linha eixo (toque 2 pontos)", modo == ModoEdicao.LINHA_EIXO, cor = Color(0xFF0D9488), onLongPress = { onSelecionarModo(ModoEdicao.LINHA_EIXO) }) { onSelecionarModo(ModoEdicao.LINHA_EIXO) }
@@ -2429,10 +2429,10 @@ private fun PaletaCategoriasHorizontais(
                         BotaoIconePaleta(Icons.Filled.ZoomIn, "Zoom", modo == ModoEdicao.ZOOM, cor = Color(0xFF0891B2), onLongPress = { onSelecionarModo(ModoEdicao.ZOOM) }) { onSelecionarModo(ModoEdicao.ZOOM) }
                         BotaoIconePaleta(Icons.Filled.ZoomIn, "Aumentar zoom", false, cor = Color(0xFF16A34A), onClick = onZoomMais)
                         BotaoIconePaleta(Icons.Filled.ZoomOut, "Diminuir zoom", false, cor = Color(0xFFDC2626), onClick = onZoomMenos)
-                        BotaoIconePaleta(Icons.Filled.CenterFocusStrong, "Enquadrar", false, cor = Color(0xFF4F46E5), onClick = onResetZoom)
+                        BotaoIconePaleta(Icons.Filled.CenterFocusStrong, "Enquadrar", false, cor = Color(0xFF2563EB), onClick = onResetZoom)
                     }
                     CategoriaPaleta.CORES -> {
-                        BotaoIconePaleta(Icons.Filled.Palette, "Cores", paletaCorAberta, cor = Color(0xFFEC4899), onLongPress = onCores, onClick = onCores)
+                        BotaoIconePaleta(Icons.Filled.Palette, "Cores", paletaCorAberta, cor = Color(0xFFF97316), onLongPress = onCores, onClick = onCores)
                         BotaoIconePaleta(
                             Icons.Filled.ScreenRotation,
                             if (telaHorizontal) "Voltar ao retrato" else "Girar tela",
@@ -2469,7 +2469,7 @@ private fun PaletaCategoriasHorizontais(
                     // bezier, polilinhas, curva".
                     CategoriaPaleta.EDICAO -> {
                         BotaoIconePaleta(Icons.Filled.Edit, "Polilinha (apaga tudo e desenha do zero)", desenhandoLivreAtivo, cor = Color(0xFF16A34A), onClick = onPolilinha)
-                        BotaoIconePaleta(Icons.Filled.AutoGraph, "Curva (arraste uma aresta)", modo == ModoEdicao.BEZIER, cor = Color(0xFFEC4899), onLongPress = { onSelecionarModo(ModoEdicao.BEZIER) }) { onSelecionarModo(ModoEdicao.BEZIER) }
+                        BotaoIconePaleta(Icons.Filled.AutoGraph, "Curva (arraste uma aresta)", modo == ModoEdicao.BEZIER, cor = Color(0xFFF97316), onLongPress = { onSelecionarModo(ModoEdicao.BEZIER) }) { onSelecionarModo(ModoEdicao.BEZIER) }
                         BotaoIconePaleta(Icons.Filled.DeleteSweep, "Apagar todos os nós", false, cor = Color(0xFFDC2626), onClick = onApagarTodosOsNos)
                     }
                 }
@@ -2763,7 +2763,7 @@ private fun CardOpcaoVisualizacao(
 }
 
 /** Aba compacta usada na barra de propriedades (ex.: Preto e branco, Zoom livre/Zoom por área)
- * — fundo roxo-claro quando [selecionada]. */
+ * — fundo azul-claro quando [selecionada]. */
 @Composable
 private fun AbaFerramenta(titulo: String, subtitulo: String?, selecionada: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Column(

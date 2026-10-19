@@ -33,10 +33,13 @@ class FacaProjetoArquivoTest {
                 updatedAt = 200L,
             )
 
-            val arquivo = ByteArrayOutputStream().also { FacaProjetoArquivo.escrever(original, it) }.toByteArray()
+            val arquivo = ByteArrayOutputStream().also {
+                FacaProjetoArquivo.escrever(original, it, grupoModeloNome = "Tênis Casual")
+            }.toByteArray()
             val importado = FacaProjetoArquivo.ler(ByteArrayInputStream(arquivo), pasta.resolve("fotos"))
 
             assertEquals("BLOCO-001", importado.manifesto.codigo)
+            assertEquals("Tênis Casual", importado.manifesto.grupoModeloNome)
             assertEquals(original.contornoJson, importado.manifesto.contornoJson)
             assertEquals(original.encaixeJson, importado.manifesto.encaixeJson)
             assertEquals(original.areaAnteriorJson, importado.manifesto.areaAnteriorJson)

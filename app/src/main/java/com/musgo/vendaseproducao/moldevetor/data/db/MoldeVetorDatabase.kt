@@ -10,10 +10,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 // exportSchema = false é deliberado: schema v1, sem histórico de migração ainda — mesmo
 // critério do PrintStudioDatabase.kt. Banco PRÓPRIO (molde_vetor.db), não compartilha com
 // PrintStudioDatabase nem com nenhum outro módulo nativo.
-@Database(entities = [FacaMoldeEntity::class], version = 2, exportSchema = false)
+@Database(
+    entities = [FacaMoldeEntity::class, GrupoModeloEntity::class],
+    version = 3,
+    exportSchema = false,
+)
 abstract class MoldeVetorDatabase : RoomDatabase() {
 
     abstract fun facaMoldeDao(): FacaMoldeDao
+    abstract fun grupoModeloDao(): GrupoModeloDao
 
     companion object {
         @Volatile private var instance: MoldeVetorDatabase? = null
@@ -25,13 +30,30 @@ abstract class MoldeVetorDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS grupos_modelos (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        nome TEXT NOT NULL,
+                        descricao TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("ALTER TABLE faca_moldes ADD COLUMN grupoModeloId INTEGER")
+            }
+        }
+
         fun getInstance(context: Context): MoldeVetorDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     MoldeVetorDatabase::class.java,
                     "molde_vetor.db",
-                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
             }
     }
 }

@@ -122,11 +122,11 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-private val Roxo = Color(0xFF4F46E5)
-private val Fundo = Color(0xFFF4F6F8)
+private val AzulDestaque = Color(0xFF2563EB)
+private val Fundo = Color.White
 private val Borda = Color(0xFFE2E8F0)
 private val Texto = Color(0xFF1E293B)
-private val CoresBlocos = listOf(Color(0xFF22C55E), Color(0xFF2563EB), Color(0xFFF59E0B), Color(0xFFEC4899))
+private val CoresBlocos = listOf(Color(0xFF22C55E), Color(0xFF2563EB), Color(0xFFF59E0B), Color(0xFF0D9488))
 
 private data class BlocoBase(val pontos: List<Offset>, val largura: Float, val altura: Float)
 private data class LimitesBloco(val esquerda: Float, val topo: Float, val direita: Float, val base: Float) {
@@ -1027,8 +1027,8 @@ fun EncaixeConsumoScreen(
                                     lineTo(origem.x + skew, origem.y + alturaMm * escala)
                                     close()
                                 }
-                                drawPath(moldura, color = Roxo.copy(alpha = 0.06f))
-                                drawPath(moldura, color = Roxo, style = Stroke(width = 3f / zoomCanvas))
+                                drawPath(moldura, color = AzulDestaque.copy(alpha = 0.06f))
+                                drawPath(moldura, color = AzulDestaque, style = Stroke(width = 3f / zoomCanvas))
                                 guiasAlinhamento.forEach { guia ->
                                     val inicio = if (guia.horizontal) {
                                         origem + Offset(0f, guia.valorMm * escala)
@@ -1063,7 +1063,7 @@ fun EncaixeConsumoScreen(
                                         (categoria != CategoriaEncaixe.SELECAO && indice == selecionado)
                                     val corContorno = when {
                                         indice in indicesComConflito -> Color(0xFFDC2626)
-                                        selecionadoVisualmente -> Roxo
+                                        selecionadoVisualmente -> AzulDestaque
                                         else -> cor
                                     }
                                     val destacado = selecionadoVisualmente || indice in indicesComConflito
@@ -1079,8 +1079,8 @@ fun EncaixeConsumoScreen(
                         val topo = min(inicioSelecao.y, fimSelecao.y)
                         val largura = abs(fimSelecao.x - inicioSelecao.x)
                         val altura = abs(fimSelecao.y - inicioSelecao.y)
-                        drawRect(Roxo.copy(alpha = 0.14f), topLeft = Offset(esquerda, topo), size = Size(largura, altura))
-                        drawRect(Roxo, topLeft = Offset(esquerda, topo), size = Size(largura, altura), style = Stroke(width = 2.5f))
+                        drawRect(AzulDestaque.copy(alpha = 0.14f), topLeft = Offset(esquerda, topo), size = Size(largura, altura))
+                        drawRect(AzulDestaque, topLeft = Offset(esquerda, topo), size = Size(largura, altura), style = Stroke(width = 2.5f))
                     }
                 }
 
@@ -1124,7 +1124,7 @@ fun EncaixeConsumoScreen(
                                 modifier = Modifier.weight(1f)
                                     .height(34.dp)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(if (categoria == cat) Roxo else Fundo)
+                                    .background(if (categoria == cat) AzulDestaque else Fundo)
                                     .clickable {
                                         categoria = cat
                                         // Ao abrir Transformar, o dedo volta a atuar sobre os
@@ -1519,7 +1519,7 @@ fun EncaixeConsumoScreen(
                 enabled = !salvando && instancias.isNotEmpty() && indicesComConflito.isEmpty(),
                 modifier = Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 12.dp, vertical = 6.dp),
                 shape = RoundedCornerShape(50),
-                colors = ButtonDefaults.buttonColors(containerColor = Roxo),
+                colors = ButtonDefaults.buttonColors(containerColor = AzulDestaque),
             ) { Text(if (salvando) "Salvando..." else "✓ Salvar encaixe e consumo", fontWeight = FontWeight.Bold) }
             }
             }
@@ -1610,10 +1610,10 @@ fun EncaixeConsumoScreen(
 private fun CabecalhoSecaoEncaixe(icone: ImageVector, titulo: String, subtitulo: String) {
     Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(Roxo.copy(alpha = 0.12f)),
+            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(AzulDestaque.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icone, contentDescription = null, tint = Roxo, modifier = Modifier.size(16.dp))
+            Icon(icone, contentDescription = null, tint = AzulDestaque, modifier = Modifier.size(16.dp))
         }
         Column(modifier = Modifier.padding(start = 8.dp)) {
             Text(titulo, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Texto)
@@ -1781,7 +1781,7 @@ private fun BotaoAjusteFino(
         contentAlignment = Alignment.Center,
     ) {
         if (icone != null) {
-            Icon(icone, contentDescription = descricao, tint = if (habilitado) Roxo else Texto.copy(alpha = 0.25f), modifier = Modifier.size(20.dp))
+            Icon(icone, contentDescription = descricao, tint = if (habilitado) AzulDestaque else Texto.copy(alpha = 0.25f), modifier = Modifier.size(20.dp))
         } else {
             Text(simbolo.orEmpty(), fontSize = 17.sp, color = if (habilitado) Texto else Texto.copy(alpha = 0.25f))
         }
@@ -1799,7 +1799,7 @@ private fun CartaoFerramenta(
     ativo: Boolean,
     modifier: Modifier = Modifier,
     icone: ImageVector? = null,
-    cor: Color = Roxo,
+    cor: Color = AzulDestaque,
     habilitado: Boolean = true,
     onClick: () -> Unit,
 ) {

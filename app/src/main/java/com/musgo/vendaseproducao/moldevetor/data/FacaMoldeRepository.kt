@@ -2,11 +2,13 @@ package com.musgo.vendaseproducao.moldevetor.data
 
 import com.musgo.vendaseproducao.moldevetor.data.db.FacaMoldeDao
 import com.musgo.vendaseproducao.moldevetor.data.db.FacaMoldeEntity
+import com.musgo.vendaseproducao.moldevetor.data.db.GrupoModeloDao
+import com.musgo.vendaseproducao.moldevetor.data.db.GrupoModeloEntity
 import com.musgo.vendaseproducao.moldevetor.domain.CalculoArea
 import com.musgo.vendaseproducao.moldevetor.domain.Contorno
 import com.musgo.vendaseproducao.moldevetor.domain.EncaixeConsumo
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import org.json.JSONArray
 import java.io.File
 import java.io.InputStream
@@ -20,6 +22,8 @@ data class FacaMoldeSummary(
     val id: Long,
     val codigo: String,
     val nome: String,
+    val grupoModeloId: Long?,
+    val grupoModeloNome: String?,
     val referenciaModelo: String?,
     val status: String,
     val areaM2: Double?,
@@ -31,6 +35,9 @@ data class FacaMoldeSummary(
 class FacaMoldeCodigoDuplicadoException(codigo: String) :
     Exception("Já existe uma faca cadastrada com o código \"$codigo\".")
 
+class GrupoModeloNomeDuplicadoException(nome: String) :
+    Exception("Já existe um grupo de modelos com o nome \"$nome\".")
+
 class BlocoImportacaoConflitoException(val codigo: String, val nome: String) :
     Exception("Já existe um bloco com o código \"$codigo\".")
 
@@ -38,13 +45,56 @@ data class BlocoImportadoResultado(val id: Long, val codigo: String, val nome: S
 
 class FacaMoldeRepository(
     private val dao: FacaMoldeDao,
+    private val grupoDao: GrupoModeloDao,
     private val filesDir: File? = null,
 ) {
 
     fun observeSummaries(): Flow<List<FacaMoldeSummary>> =
-        dao.observeAll().map { list -> list.map { it.toSummary() } }
+        combine(dao.observeAll(), grupoDao.observeAll()) { facas, grupos ->
+            val nomesPorId = grupos.associate { it.id to it.nome }
+            facas.map { it.toSummary(nomesPorId[it.grupoModeloId]) }
+        }
+
+    fun observeGruposModelos(): Flow<List<GrupoModeloEntity>> = grupoDao.observeAll()
 
     suspend fun getById(id: Long): FacaMoldeEntity? = dao.getById(id)
+
+    suspend fun salvarGrupoModelo(id: Long?, nome: String, descricao: String?): Long {
+        val nomeTrim = nome.trim()
+        require(nomeTrim.isNotBlank()) { "Informe o nome do grupo de modelos." }
+        val existente = grupoDao.getByNome(nomeTrim)
+        if (existente != null && existente.id != id) {
+            throw GrupoModeloNomeDuplicadoException(nomeTrim)
+        }
+
+        val agora = System.currentTimeMillis()
+        return if (id == null) {
+            grupoDao.insert(
+                GrupoModeloEntity(
+                    nome = nomeTrim,
+                    descricao = descricao?.trim()?.ifBlank { null },
+                    createdAt = agora,
+                    updatedAt = agora,
+                ),
+            )
+        } else {
+            val atual = grupoDao.getById(id)
+                ?: throw IllegalStateException("Grupo de modelos não encontrado (id=$id).")
+            grupoDao.update(
+                atual.copy(
+                    nome = nomeTrim,
+                    descricao = descricao?.trim()?.ifBlank { null },
+                    updatedAt = agora,
+                ),
+            )
+            id
+        }
+    }
+
+    suspend fun excluirGrupoModelo(id: Long) {
+        grupoDao.removerAssociacoes(id, System.currentTimeMillis())
+        grupoDao.delete(id)
+    }
 
     /** Cria (id == null) ou edita uma faca. Valida unicidade de código ANTES de gravar — ver
      * campo "Código da faca (único, obrigatório)" na especificação. */
@@ -52,6 +102,7 @@ class FacaMoldeRepository(
         id: Long?,
         codigo: String,
         nome: String,
+        grupoModeloId: Long?,
         referenciaModelo: String?,
         observacoes: String?,
     ): Long {
@@ -67,6 +118,7 @@ class FacaMoldeRepository(
                 FacaMoldeEntity(
                     codigo = codigoTrim,
                     nome = nome.trim(),
+                    grupoModeloId = grupoModeloId,
                     referenciaModelo = referenciaModelo?.trim()?.ifBlank { null },
                     observacoes = observacoes?.trim()?.ifBlank { null },
                     createdAt = now,
@@ -79,6 +131,7 @@ class FacaMoldeRepository(
                 atual.copy(
                     codigo = codigoTrim,
                     nome = nome.trim(),
+                    grupoModeloId = grupoModeloId,
                     referenciaModelo = referenciaModelo?.trim()?.ifBlank { null },
                     observacoes = observacoes?.trim()?.ifBlank { null },
                     updatedAt = now,
@@ -105,7 +158,8 @@ class FacaMoldeRepository(
     /** Exporta cadastro, vetores, blocos/camadas, áreas, encaixe e foto num único `.bloco`. */
     suspend fun exportarBloco(id: Long, destino: OutputStream) {
         val faca = dao.getById(id) ?: throw IllegalStateException("Bloco não encontrado (id=$id).")
-        FacaProjetoArquivo.escrever(faca, destino)
+        val grupoNome = faca.grupoModeloId?.let { grupoDao.getById(it)?.nome }
+        FacaProjetoArquivo.escrever(faca, destino, grupoNome)
     }
 
     /**
@@ -130,10 +184,20 @@ class FacaMoldeRepository(
 
             val agora = System.currentTimeMillis()
             val fotoNova = projeto.fotoTemporaria?.absolutePath
+            val grupoModeloId = dados.grupoModeloNome?.trim()?.takeIf { it.isNotBlank() }?.let { nomeGrupo ->
+                grupoDao.getByNome(nomeGrupo)?.id ?: grupoDao.insert(
+                    GrupoModeloEntity(
+                        nome = nomeGrupo,
+                        createdAt = agora,
+                        updatedAt = agora,
+                    ),
+                )
+            }
             val entidade = if (existente == null) {
                 FacaMoldeEntity(
                     codigo = dados.codigo.trim(),
                     nome = dados.nome.trim(),
+                    grupoModeloId = grupoModeloId,
                     referenciaModelo = dados.referenciaModelo,
                     observacoes = dados.observacoes,
                     status = FacaMoldeEntity.STATUS_ATIVA,
@@ -151,6 +215,7 @@ class FacaMoldeRepository(
                 existente.copy(
                     codigo = dados.codigo.trim(),
                     nome = dados.nome.trim(),
+                    grupoModeloId = grupoModeloId,
                     referenciaModelo = dados.referenciaModelo,
                     observacoes = dados.observacoes,
                     status = FacaMoldeEntity.STATUS_ATIVA,
@@ -218,10 +283,12 @@ class FacaMoldeRepository(
     }
 }
 
-private fun FacaMoldeEntity.toSummary() = FacaMoldeSummary(
+private fun FacaMoldeEntity.toSummary(grupoModeloNome: String?) = FacaMoldeSummary(
     id = id,
     codigo = codigo,
     nome = nome,
+    grupoModeloId = grupoModeloId,
+    grupoModeloNome = grupoModeloNome,
     referenciaModelo = referenciaModelo,
     status = status,
     areaM2 = areaM2,

@@ -3,7 +3,11 @@ package com.musgo.vendaseproducao.moldevetor.ui.cadastro
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,26 +15,34 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.FileOpen
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,9 +50,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import com.musgo.vendaseproducao.moldevetor.data.BlocoImportacaoConflitoException
 import com.musgo.vendaseproducao.moldevetor.data.FacaMoldeCodigoDuplicadoException
 import com.musgo.vendaseproducao.moldevetor.data.FacaMoldeRepository
@@ -48,8 +62,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Criar/editar uma Faca (Fase 1 — só os campos de identificação; foto/contorno/área entram
- * nas Fases 2-4). [facaId] null = criação; não-null = edição, carrega os dados existentes. */
+/** Cadastro e edição dos dados do bloco, incluindo o grupo de modelo ao qual ele pertence. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CadastroFacaScreen(
@@ -57,13 +70,17 @@ fun CadastroFacaScreen(
     facaId: Long?,
     onSaved: () -> Unit,
     onBack: () -> Unit,
+    onGerenciarGrupos: () -> Unit,
     onVetorizar: (Long) -> Unit,
     onCriarManual: (Long, larguraMm: Double, alturaMm: Double) -> Unit,
     somenteImportacao: Boolean = false,
     onImportado: (Long) -> Unit = {},
 ) {
+    val grupos by repository.observeGruposModelos().collectAsState(initial = emptyList())
     var codigo by remember { mutableStateOf("") }
     var nome by remember { mutableStateOf("") }
+    var grupoModeloId by remember { mutableStateOf<Long?>(null) }
+    var grupoExpandido by remember { mutableStateOf(false) }
     var referenciaModelo by remember { mutableStateOf("") }
     var observacoes by remember { mutableStateOf("") }
     var areaM2Atual by remember { mutableStateOf<Double?>(null) }
@@ -81,6 +98,7 @@ fun CadastroFacaScreen(
             repository.getById(facaId)?.let { faca ->
                 codigo = faca.codigo
                 nome = faca.nome
+                grupoModeloId = faca.grupoModeloId
                 referenciaModelo = faca.referenciaModelo ?: ""
                 observacoes = faca.observacoes ?: ""
                 areaM2Atual = faca.areaM2
@@ -102,6 +120,7 @@ fun CadastroFacaScreen(
                     id = facaId,
                     codigo = codigo,
                     nome = nome,
+                    grupoModeloId = grupoModeloId,
                     referenciaModelo = referenciaModelo,
                     observacoes = observacoes,
                 )
@@ -144,9 +163,15 @@ fun CadastroFacaScreen(
     }
 
     Scaffold(
+        containerColor = Color.White,
         topBar = {
             TopAppBar(
-                title = { Text(if (facaId == null) "Nova Faca" else "Editar Faca") },
+                title = {
+                    Column {
+                        Text(if (facaId == null) "Nova faca" else "Editar faca", fontWeight = FontWeight.SemiBold)
+                        Text("Cadastro do bloco", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "Voltar")
@@ -160,120 +185,155 @@ fun CadastroFacaScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (somenteImportacao && facaId == null) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color.White,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    shadowElevation = 1.dp,
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                        Text("Importar do Editor de Facas", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            "Crie o contorno e calcule o consumo no aplicativo Editor de Facas. Depois importe aqui o arquivo .bloco finalizado.",
-                            color = Color(0xFF64748B),
+                SecaoCadastro(titulo = "Importar do Editor de Facas") {
+                    Text(
+                        "Selecione um arquivo .bloco finalizado para importar o cadastro, o contorno e o consumo.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = { launcherImportar.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                        enabled = !importando,
+                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    ) {
+                        Icon(Icons.Filled.FileOpen, contentDescription = null)
+                        Text(if (importando) "  Importando..." else "  Escolher arquivo .bloco")
+                    }
+                }
+            } else {
+                SecaoCadastro(titulo = "Identificação") {
+                    OutlinedTextField(
+                        value = codigo,
+                        onValueChange = { codigo = it; erro = null },
+                        label = { Text("Código da faca *") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = nome,
+                        onValueChange = { nome = it; erro = null },
+                        label = { Text("Nome / descrição *") },
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                    )
+
+                    Text(
+                        "Grupo de facas do modelo",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 18.dp, bottom = 6.dp),
+                    )
+                    ExposedDropdownMenuBox(
+                        expanded = grupoExpandido,
+                        onExpandedChange = { grupoExpandido = it },
+                    ) {
+                        val grupoSelecionado = grupos.firstOrNull { it.id == grupoModeloId }
+                        OutlinedTextField(
+                            value = grupoSelecionado?.nome ?: "Sem grupo",
+                            onValueChange = {},
+                            readOnly = true,
+                            leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(grupoExpandido) },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
                         )
-                        OutlinedButton(
-                            onClick = { launcherImportar.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
-                            enabled = !importando,
-                            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                        ExposedDropdownMenu(
+                            expanded = grupoExpandido,
+                            onDismissRequest = { grupoExpandido = false },
                         ) {
-                            Icon(Icons.Filled.FileOpen, contentDescription = null)
-                            Text(if (importando) "  Importando..." else "  Escolher arquivo .bloco")
+                            DropdownMenuItem(
+                                text = { Text("Sem grupo") },
+                                onClick = { grupoModeloId = null; grupoExpandido = false },
+                            )
+                            grupos.forEach { grupo ->
+                                DropdownMenuItem(
+                                    text = { Text(grupo.nome) },
+                                    onClick = { grupoModeloId = grupo.id; grupoExpandido = false },
+                                )
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = onGerenciarGrupos) {
+                            Text(if (grupos.isEmpty()) "Criar grupo de modelos" else "Gerenciar grupos")
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = referenciaModelo,
+                        onValueChange = { referenciaModelo = it },
+                        label = { Text("Referência complementar (opcional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                    )
+                }
+
+                SecaoCadastro(titulo = "Observações") {
+                    OutlinedTextField(
+                        value = observacoes,
+                        onValueChange = { observacoes = it },
+                        label = { Text("Notas sobre esta faca") },
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                        shape = RoundedCornerShape(12.dp),
+                        minLines = 3,
+                    )
+                }
+
+                if (facaId != null) {
+                    SecaoCadastro(titulo = "Vetorizações") {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Icon(Icons.Filled.Straighten, contentDescription = null, tint = Color(0xFF2563EB))
+                            Column {
+                                Text(
+                                    areaM2Atual?.let { "Área vetorizada: ${"%.4f".format(it)} m²" }
+                                        ?: "Esta faca ainda não foi vetorizada.",
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                consumoEncaixeM2Atual?.let { consumo ->
+                                    Text(
+                                        "Consumo pelo encaixe: ${"%.4f".format(consumo)} m²/bloco",
+                                        color = Color(0xFF047857),
+                                        fontSize = 13.sp,
+                                    )
+                                }
+                            }
+                        }
+                        if (!somenteImportacao) {
+                            OutlinedButton(
+                                onClick = { onVetorizar(facaId) },
+                                modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                            ) {
+                                Text(if (areaM2Atual != null) "Vetorizar novamente" else "Vetorizar foto (Beta)")
+                            }
+                            OutlinedButton(
+                                onClick = { mostrarDialogoManual = true },
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            ) {
+                                Text("Criar geometria manual (sem foto)")
+                            }
                         }
                     }
                 }
-                erro?.let {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(it, color = Color(0xFFB91C1C))
-                }
-            } else {
-            OutlinedTextField(
-                value = codigo,
-                onValueChange = { codigo = it },
-                label = { Text("Código da faca *") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedTextField(
-                value = nome,
-                onValueChange = { nome = it },
-                label = { Text("Nome / descrição *") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedTextField(
-                value = referenciaModelo,
-                onValueChange = { referenciaModelo = it },
-                label = { Text("Modelo ou referência de calçado (opcional)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedTextField(
-                value = observacoes,
-                onValueChange = { observacoes = it },
-                label = { Text("Observações") },
-                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
-                minLines = 3,
-            )
-            if (erro != null) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(text = erro ?: "", color = androidx.compose.ui.graphics.Color(0xFFB91C1C))
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Button(
-                onClick = { salvar() },
-                enabled = !salvando,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (salvando) "Salvando..." else "Salvar")
-            }
-            // Vetorização (Fase 3) só fica disponível depois de a faca já existir no banco —
-            // o contorno/área precisam de um id pra serem gravados (FacaMoldeRepository.
-            // salvarResultadoVetorizacao). Numa faca nova, peça pra salvar antes.
-            if (facaId != null) {
-                Spacer(modifier = Modifier.height(24.dp))
-                Text(
-                    text = if (areaM2Atual != null) {
-                        "Área vetorizada: ${"%.4f".format(areaM2Atual)} m²"
-                    } else {
-                        "Esta faca ainda não foi vetorizada."
-                    },
-                )
-                consumoEncaixeM2Atual?.let { consumo ->
-                    Text(
-                        text = "Consumo pelo encaixe: ${"%.4f".format(consumo)} m²/bloco",
-                        color = androidx.compose.ui.graphics.Color(0xFF047857),
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                }
-                if (!somenteImportacao) {
-                    OutlinedButton(
-                        onClick = { onVetorizar(facaId) },
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    ) {
-                        Text(if (areaM2Atual != null) "Vetorizar novamente" else "Vetorizar foto (Beta)")
-                    }
-                // Pedido do Tiago: "opção de criar geometrias quadradas ou retangulares sem
-                // precisar de capturas de fotografias, inserindo seu lado 1 e lado 2" — pula
-                // Captura inteiramente, gera um retângulo pelos lados digitados e abre direto no
-                // editor de contorno (mesmas ferramentas de ajuste, só sem foto de fundo).
-                    OutlinedButton(
-                        onClick = { mostrarDialogoManual = true },
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    ) {
-                        Text("Criar geometria manual (sem foto)")
-                    }
+
+                erro?.let { Text(it, color = Color(0xFFB91C1C), fontSize = 13.sp) }
+                Button(
+                    onClick = { salvar() },
+                    enabled = !salvando,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (salvando) "Salvando..." else "Salvar cadastro")
                 }
             }
+            if (somenteImportacao) {
+                erro?.let { Text(it, color = Color(0xFFB91C1C), fontSize = 13.sp) }
             }
+            Spacer(Modifier.height(12.dp))
         }
     }
 
@@ -291,7 +351,7 @@ fun CadastroFacaScreen(
         AlertDialog(
             onDismissRequest = { uriImportacaoConflito = null },
             title = { Text("Código já cadastrado") },
-            text = { Text("Deseja substituir o cadastro atual pelo contorno, consumo, encaixe e foto recebidos do Editor de Facas?") },
+            text = { Text("Deseja substituir o cadastro atual pelo contorno, consumo, encaixe e foto recebidos?") },
             confirmButton = {
                 TextButton(onClick = { importarProjeto(uri, sobrescrever = true) }) { Text("Substituir") }
             },
@@ -303,7 +363,27 @@ fun CadastroFacaScreen(
 }
 
 @Composable
-private fun DialogoGeometriaManual(onCancelar: () -> Unit, onCriar: (larguraMm: Double, alturaMm: Double) -> Unit) {
+private fun SecaoCadastro(titulo: String, conteudo: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(titulo, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(14.dp))
+            conteudo()
+        }
+    }
+}
+
+@Composable
+private fun DialogoGeometriaManual(
+    onCancelar: () -> Unit,
+    onCriar: (larguraMm: Double, alturaMm: Double) -> Unit,
+) {
     var lado1Texto by remember { mutableStateOf("") }
     var lado2Texto by remember { mutableStateOf("") }
     val lado1 = lado1Texto.replace(',', '.').toDoubleOrNull()
@@ -313,7 +393,7 @@ private fun DialogoGeometriaManual(onCancelar: () -> Unit, onCriar: (larguraMm: 
         title = { Text("Nova geometria retangular") },
         text = {
             Column {
-                Text("Informe os dois lados do retângulo (ou valores iguais pra um quadrado). Você pode ajustar os vértices depois no editor.")
+                Text("Informe os dois lados do retângulo. Use valores iguais para criar um quadrado.")
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = lado1Texto,
@@ -321,6 +401,7 @@ private fun DialogoGeometriaManual(onCancelar: () -> Unit, onCriar: (larguraMm: 
                     label = { Text("Lado 1 (mm)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -330,6 +411,7 @@ private fun DialogoGeometriaManual(onCancelar: () -> Unit, onCriar: (larguraMm: 
                     label = { Text("Lado 2 (mm)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

@@ -14,6 +14,7 @@ data class FacaMoldeEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val codigo: String,
     val nome: String,
+    val grupoModeloId: Long? = null,
     val referenciaModelo: String? = null,
     val observacoes: String? = null,
     // ATIVA | INATIVA — exclusão lógica por padrão (ver FacaMoldeRepository.excluirLogico).

@@ -176,13 +176,15 @@ fun ListaFacasScreen(
         .filter { faca ->
             busca.isBlank() ||
                 faca.codigo.contains(busca, ignoreCase = true) ||
-                faca.nome.contains(busca, ignoreCase = true)
+                faca.nome.contains(busca, ignoreCase = true) ||
+                faca.grupoModeloNome?.contains(busca, ignoreCase = true) == true
         }
 
     Scaffold(
+        containerColor = Color.White,
         topBar = {
             TopAppBar(
-                title = { Text("Editor de Facas") },
+                title = { Text("Blocos e facas") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "Voltar")
@@ -224,6 +226,7 @@ fun ListaFacasScreen(
                     }
                 },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             )
 
@@ -270,7 +273,7 @@ fun ListaFacasScreen(
                         Card(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
                             colors = CardDefaults.cardColors(containerColor = Color.White),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(18.dp),
                             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
                             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                         ) {
@@ -285,6 +288,9 @@ fun ListaFacasScreen(
                                             if (faca.status == FacaMoldeEntity.STATUS_INATIVA) {
                                                 AssistChip(onClick = {}, label = { Text("Inativa", fontSize = 10.sp) }, modifier = Modifier.size(width = 64.dp, height = 22.dp))
                                             }
+                                        }
+                                        faca.grupoModeloNome?.let {
+                                            Text("Modelo: $it", fontSize = 11.sp, color = Color(0xFF2563EB), fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
                                         }
                                         faca.referenciaModelo?.let { Text(it, fontSize = 11.sp, color = Color(0xFF64748B)) }
                                         Text(

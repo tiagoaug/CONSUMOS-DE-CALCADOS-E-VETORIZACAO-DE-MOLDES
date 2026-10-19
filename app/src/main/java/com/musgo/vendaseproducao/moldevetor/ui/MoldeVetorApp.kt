@@ -17,6 +17,8 @@ import com.musgo.vendaseproducao.moldevetor.domain.EncaixeConsumo
 import com.musgo.vendaseproducao.moldevetor.domain.Ponto
 import com.musgo.vendaseproducao.moldevetor.ui.cadastro.CadastroFacaScreen
 import com.musgo.vendaseproducao.moldevetor.ui.captura.CapturaScreen
+import com.musgo.vendaseproducao.moldevetor.ui.dashboard.DashboardScreen
+import com.musgo.vendaseproducao.moldevetor.ui.grupos.GruposModelosScreen
 import com.musgo.vendaseproducao.moldevetor.ui.lista.ListaFacasScreen
 import com.musgo.vendaseproducao.moldevetor.ui.medida.MedidaReferenciaScreen
 import com.musgo.vendaseproducao.moldevetor.ui.encaixe.EncaixeConsumoScreen
@@ -30,8 +32,14 @@ import org.opencv.android.Utils
 import org.opencv.core.Mat
 
 private sealed class MoldeVetorScreen {
+    data object Dashboard : MoldeVetorScreen()
     data object Lista : MoldeVetorScreen()
-    data class Cadastro(val facaId: Long?) : MoldeVetorScreen()
+    data class GruposModelos(
+        val voltarParaCadastro: Boolean = false,
+        val facaId: Long? = null,
+        val cadastroVoltaAoDashboard: Boolean = false,
+    ) : MoldeVetorScreen()
+    data class Cadastro(val facaId: Long?, val voltarAoDashboard: Boolean = false) : MoldeVetorScreen()
     data class Captura(val facaId: Long) : MoldeVetorScreen()
     data class Validacao(
         val facaId: Long,
@@ -54,13 +62,15 @@ private sealed class MoldeVetorScreen {
 fun MoldeVetorApp(onClose: () -> Unit) {
     val context = LocalContext.current
     val repository = remember {
+        val database = MoldeVetorDatabase.getInstance(context)
         FacaMoldeRepository(
-            dao = MoldeVetorDatabase.getInstance(context).facaMoldeDao(),
+            dao = database.facaMoldeDao(),
+            grupoDao = database.grupoModeloDao(),
             filesDir = context.filesDir,
         )
     }
     val scope = rememberCoroutineScope()
-    var screen by remember { mutableStateOf<MoldeVetorScreen>(MoldeVetorScreen.Lista) }
+    var screen by remember { mutableStateOf<MoldeVetorScreen>(MoldeVetorScreen.Dashboard) }
     var salvandoMedida by remember { mutableStateOf(false) }
     var erroMedida by remember { mutableStateOf<String?>(null) }
 
@@ -103,20 +113,48 @@ fun MoldeVetorApp(onClose: () -> Unit) {
     }
 
     when (val atual = screen) {
+        is MoldeVetorScreen.Dashboard -> DashboardScreen(
+            repository = repository,
+            onAbrirBlocos = { screen = MoldeVetorScreen.Lista },
+            onAbrirGrupos = { screen = MoldeVetorScreen.GruposModelos() },
+            onNovaFaca = { screen = MoldeVetorScreen.Cadastro(null, voltarAoDashboard = true) },
+            onBack = onClose,
+        )
+
         is MoldeVetorScreen.Lista -> ListaFacasScreen(
             repository = repository,
             onFacaSelecionada = { id -> screen = MoldeVetorScreen.Cadastro(id) },
             onVisualizarBloco = { id -> abrirBlocoSalvo(id, somenteVisualizacao = true) },
             onEditarBloco = { id -> abrirBlocoSalvo(id, somenteVisualizacao = false) },
             onNovaFaca = { screen = MoldeVetorScreen.Cadastro(null) },
-            onBack = onClose,
+            onBack = { screen = MoldeVetorScreen.Dashboard },
+        )
+
+        is MoldeVetorScreen.GruposModelos -> GruposModelosScreen(
+            repository = repository,
+            onBack = {
+                screen = if (atual.voltarParaCadastro) {
+                    MoldeVetorScreen.Cadastro(atual.facaId, atual.cadastroVoltaAoDashboard)
+                } else {
+                    MoldeVetorScreen.Dashboard
+                }
+            },
         )
 
         is MoldeVetorScreen.Cadastro -> CadastroFacaScreen(
             repository = repository,
             facaId = atual.facaId,
             onSaved = { screen = MoldeVetorScreen.Lista },
-            onBack = { screen = MoldeVetorScreen.Lista },
+            onBack = {
+                screen = if (atual.voltarAoDashboard) MoldeVetorScreen.Dashboard else MoldeVetorScreen.Lista
+            },
+            onGerenciarGrupos = {
+                screen = MoldeVetorScreen.GruposModelos(
+                    voltarParaCadastro = true,
+                    facaId = atual.facaId,
+                    cadastroVoltaAoDashboard = atual.voltarAoDashboard,
+                )
+            },
             onVetorizar = { id -> screen = MoldeVetorScreen.Captura(id) },
             // Pedido do Tiago: "opção de criar geometrias quadradas ou retangulares sem precisar
             // de capturas de fotografias, inserindo seu lado 1 e lado 2" — pula Captura por
