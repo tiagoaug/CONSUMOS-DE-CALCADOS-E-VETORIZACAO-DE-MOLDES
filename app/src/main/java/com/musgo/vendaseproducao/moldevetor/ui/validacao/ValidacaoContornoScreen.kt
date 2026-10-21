@@ -109,6 +109,7 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -175,8 +176,9 @@ private val CorFundoCartaoItemAtivo = Color(0xFFE0EAFF)
 private val CorDestaque = Color(0xFF2563EB)
 private val CorTextoItem = Color(0xFF1E293B)
 private val CoresGeometria = listOf(
-    Color(0xFF22C55E), Color(0xFF2563EB), Color(0xFFDC2626), Color(0xFFF59E0B),
-    Color(0xFF0891B2), Color(0xFF0D9488), Color(0xFFF97316), Color(0xFF334155),
+    Color(0xFF000000), Color(0xFF334155), Color(0xFF2563EB),
+    Color(0xFF22C55E), Color(0xFFDC2626), Color(0xFFF59E0B),
+    Color(0xFF7C3AED), Color(0xFFDB2777), Color(0xFF0D9488),
 )
 
 /** Validação visual do contorno detectado — layout fixo em duas partes: a área de visualização
@@ -199,8 +201,9 @@ fun ValidacaoContornoScreen(
     contornoInicial: Contorno,
     fotoCorrigida: Bitmap?,
     pxPorMm: Double,
+    corCapaArgbInicial: Int = -16777216,
     somenteVisualizacao: Boolean = false,
-    onConfirmado: (Contorno) -> Unit,
+    onConfirmado: (Contorno, corCapaArgb: Int) -> Unit,
     onBack: () -> Unit,
 ) {
     // O editor permanece em retrato. Ao sair, a Activity volta a seguir a orientação do app.
@@ -360,7 +363,7 @@ fun ValidacaoContornoScreen(
     // no fim (sem inserir em aresta), até o usuário tocar perto do ponto inicial — aí fecha e
     // abre a paleta de cor pra essa geometria.
     var desenhandoAberto by remember { mutableStateOf(false) }
-    var corGeometria by remember { mutableStateOf(Color(0xFF22C55E)) }
+    var corGeometria by remember(corCapaArgbInicial) { mutableStateOf(Color(corCapaArgbInicial)) }
     var mostrarSeletorCor by remember { mutableStateOf(false) }
 
     // Pedido do Tiago: "gostaria de duplicar somente dentro de encaixe, pode retirar a opção de
@@ -749,7 +752,7 @@ fun ValidacaoContornoScreen(
                         val avisoFerramenta = mensagemRecalculo
                         Text(
                             text = when {
-                                mostrarSeletorCor -> "Cores do bloco"
+                                mostrarSeletorCor -> "Cor da capa"
                                 painelFerramentaVisivel -> rotuloModo(modo)
                                 else -> "Selecione uma ferramenta"
                             },
@@ -780,7 +783,7 @@ fun ValidacaoContornoScreen(
                     ) {
                     if (mostrarSeletorCor) {
                         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("Escolha a cor usada para identificar este bloco.", fontSize = 11.sp, color = CorTextoItem.copy(alpha = 0.7f))
+                            Text("Escolha a cor sólida da faca na miniatura e na capa exportada. Preto é o padrão.", fontSize = 11.sp, color = CorTextoItem.copy(alpha = 0.7f))
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 CoresGeometria.forEach { cor ->
                                     AmostraCor(cor = cor, selecionada = cor == corGeometria) { corGeometria = cor }
@@ -1750,7 +1753,7 @@ fun ValidacaoContornoScreen(
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar às ferramentas", tint = CorDestaque, modifier = Modifier.size(17.dp))
                             }
                             Text(
-                                text = if (mostrarSeletorCor) "Cores do bloco" else rotuloModo(modo),
+                                text = if (mostrarSeletorCor) "Cor da capa" else rotuloModo(modo),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = CorDestaque,
@@ -1896,7 +1899,7 @@ fun ValidacaoContornoScreen(
                         externo = verticesPx.map { p -> Ponto(xMm = p.x / pxPorMm, yMm = p.y / pxPorMm) },
                         blocos = emptyList(),
                     )
-                    onConfirmado(contornoAjustado)
+                    onConfirmado(contornoAjustado, corGeometria.toArgb())
                 }) { Text("Concluir e continuar") }
             },
             dismissButton = {
@@ -2432,7 +2435,7 @@ private fun PaletaCategoriasHorizontais(
                         BotaoIconePaleta(Icons.Filled.CenterFocusStrong, "Enquadrar", false, cor = Color(0xFF2563EB), onClick = onResetZoom)
                     }
                     CategoriaPaleta.CORES -> {
-                        BotaoIconePaleta(Icons.Filled.Palette, "Cores", paletaCorAberta, cor = Color(0xFFF97316), onLongPress = onCores, onClick = onCores)
+                        BotaoIconePaleta(Icons.Filled.Palette, "Cor da capa", paletaCorAberta, cor = Color(0xFFF97316), onLongPress = onCores, onClick = onCores)
                         BotaoIconePaleta(
                             Icons.Filled.ScreenRotation,
                             if (telaHorizontal) "Voltar ao retrato" else "Girar tela",

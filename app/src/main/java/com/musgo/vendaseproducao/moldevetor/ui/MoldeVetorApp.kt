@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import com.musgo.vendaseproducao.moldevetor.data.FacaMoldeRepository
 import com.musgo.vendaseproducao.moldevetor.data.ContornoJsonMapper
+import com.musgo.vendaseproducao.moldevetor.data.EncaixeJsonMapper
 import com.musgo.vendaseproducao.moldevetor.data.db.MoldeVetorDatabase
 import com.musgo.vendaseproducao.moldevetor.domain.Contorno
 import com.musgo.vendaseproducao.moldevetor.domain.EncaixeConsumo
@@ -40,24 +41,30 @@ private sealed class MoldeVetorScreen {
         val cadastroVoltaAoDashboard: Boolean = false,
     ) : MoldeVetorScreen()
     data class Cadastro(val facaId: Long?, val voltarAoDashboard: Boolean = false) : MoldeVetorScreen()
-    data class Captura(val facaId: Long) : MoldeVetorScreen()
+    data class Captura(val facaId: Long, val corCapaArgb: Int = -16777216) : MoldeVetorScreen()
     data class Validacao(
         val facaId: Long,
         val contorno: Contorno,
         val fotoCorrigida: Bitmap?,
         val pxPorMm: Double,
         val fotoPath: String?,
+        val corCapaArgb: Int = -16777216,
         val somenteVisualizacao: Boolean = false,
         val voltarParaLista: Boolean = false,
     ) : MoldeVetorScreen()
     data class Medida(val facaId: Long, val contorno: Contorno, val fotoPath: String?) : MoldeVetorScreen()
-    data class Encaixe(val facaId: Long, val contorno: Contorno, val fotoPath: String?) : MoldeVetorScreen()
+    data class Encaixe(
+        val facaId: Long,
+        val contorno: Contorno,
+        val fotoPath: String?,
+        val encaixeInicial: EncaixeConsumo?,
+    ) : MoldeVetorScreen()
 }
 
 /** Orquestra a navegação entre as telas nativas do módulo (sem Navigation-Compose — mesmo
  * critério do Print Studio: poucas telas, troca simples de estado já basta). Fluxo completo de
- * vetorização (Fases 3-4): Captura → Validação (vértices arrastáveis) → Medida (desvio opcional
- * por paquímetro) → salva via [FacaMoldeRepository.salvarResultadoVetorizacao]. */
+ * projeto em três etapas independentes: vetorização, conferência de desvio e encaixe/consumo.
+ * Cada etapa é salva ao ser confirmada e pode ser reaberta sem apagar as outras. */
 @Composable
 fun MoldeVetorApp(onClose: () -> Unit) {
     val context = LocalContext.current
@@ -74,19 +81,39 @@ fun MoldeVetorApp(onClose: () -> Unit) {
     var salvandoMedida by remember { mutableStateOf(false) }
     var erroMedida by remember { mutableStateOf<String?>(null) }
 
-    fun salvarResultado(facaId: Long, contorno: Contorno, encaixe: EncaixeConsumo, fotoPath: String?) {
+    fun salvarContornoDaEtapa(facaId: Long, contorno: Contorno, fotoPath: String?, corCapaArgb: Int? = null) {
         salvandoMedida = true
         erroMedida = null
         scope.launch {
             try {
-                repository.salvarResultadoVetorizacao(facaId, contorno, encaixe, fotoPath)
+                repository.salvarEtapaContorno(facaId, contorno, fotoPath, corCapaArgb)
                 salvandoMedida = false
-                // No aplicativo independente, o projeto concluído volta para a lista. Ali o
-                // usuário exporta o pacote .bloco que será importado no sistema principal.
-                screen = MoldeVetorScreen.Lista
+                screen = MoldeVetorScreen.Cadastro(facaId)
             } catch (e: Exception) {
                 salvandoMedida = false
                 erroMedida = "Erro ao salvar: ${e.message}"
+            }
+        }
+    }
+
+    fun abrirCaptura(facaId: Long) {
+        scope.launch {
+            val cor = withContext(Dispatchers.IO) { repository.getById(facaId)?.corCapaArgb } ?: -16777216
+            screen = MoldeVetorScreen.Captura(facaId, cor)
+        }
+    }
+
+    fun salvarEncaixeDaEtapa(facaId: Long, encaixe: EncaixeConsumo) {
+        salvandoMedida = true
+        erroMedida = null
+        scope.launch {
+            try {
+                repository.salvarEtapaEncaixe(facaId, encaixe)
+                salvandoMedida = false
+                screen = MoldeVetorScreen.Cadastro(facaId)
+            } catch (e: Exception) {
+                salvandoMedida = false
+                erroMedida = "Erro ao salvar encaixe: ${e.message}"
             }
         }
     }
@@ -106,9 +133,31 @@ fun MoldeVetorApp(onClose: () -> Unit) {
                 fotoCorrigida = fotoCorrigida,
                 pxPorMm = PerspectiveCorrector.PX_POR_MM,
                 fotoPath = faca.fotoPath,
+                corCapaArgb = faca.corCapaArgb,
                 somenteVisualizacao = somenteVisualizacao,
-                voltarParaLista = true,
+                voltarParaLista = somenteVisualizacao,
             )
+        }
+    }
+
+    fun abrirConferenciaSalva(facaId: Long) {
+        scope.launch {
+            erroMedida = null
+            val faca = withContext(Dispatchers.IO) { repository.getById(facaId) } ?: return@launch
+            val contorno = faca.contornoJson?.let { runCatching { ContornoJsonMapper.deJson(it) }.getOrNull() }
+                ?: return@launch
+            screen = MoldeVetorScreen.Medida(facaId, contorno, faca.fotoPath)
+        }
+    }
+
+    fun abrirEncaixeSalvo(facaId: Long) {
+        scope.launch {
+            erroMedida = null
+            val faca = withContext(Dispatchers.IO) { repository.getById(facaId) } ?: return@launch
+            val contorno = faca.contornoJson?.let { runCatching { ContornoJsonMapper.deJson(it) }.getOrNull() }
+                ?: return@launch
+            val encaixe = faca.encaixeJson?.let { runCatching { EncaixeJsonMapper.deJson(it) }.getOrNull() }
+            screen = MoldeVetorScreen.Encaixe(facaId, contorno, faca.fotoPath, encaixe)
         }
     }
 
@@ -124,8 +173,7 @@ fun MoldeVetorApp(onClose: () -> Unit) {
         is MoldeVetorScreen.Lista -> ListaFacasScreen(
             repository = repository,
             onFacaSelecionada = { id -> screen = MoldeVetorScreen.Cadastro(id) },
-            onVisualizarBloco = { id -> abrirBlocoSalvo(id, somenteVisualizacao = true) },
-            onEditarBloco = { id -> abrirBlocoSalvo(id, somenteVisualizacao = false) },
+            onEditarBloco = { id -> screen = MoldeVetorScreen.Cadastro(id) },
             onNovaFaca = { screen = MoldeVetorScreen.Cadastro(null) },
             onBack = { screen = MoldeVetorScreen.Dashboard },
         )
@@ -155,7 +203,10 @@ fun MoldeVetorApp(onClose: () -> Unit) {
                     cadastroVoltaAoDashboard = atual.voltarAoDashboard,
                 )
             },
-            onVetorizar = { id -> screen = MoldeVetorScreen.Captura(id) },
+            onVetorizar = { id -> abrirCaptura(id) },
+            onEditarVetorizacao = { id -> abrirBlocoSalvo(id, somenteVisualizacao = false) },
+            onConferirDesvio = { id -> abrirConferenciaSalva(id) },
+            onEditarEncaixe = { id -> abrirEncaixeSalvo(id) },
             // Pedido do Tiago: "opção de criar geometrias quadradas ou retangulares sem precisar
             // de capturas de fotografias, inserindo seu lado 1 e lado 2" — pula Captura por
             // completo, monta um retângulo com os lados digitados e abre direto na Validação
@@ -169,21 +220,32 @@ fun MoldeVetorApp(onClose: () -> Unit) {
                         Ponto(xMm = 0.0, yMm = alturaMm),
                     ),
                 )
-                screen = MoldeVetorScreen.Validacao(
-                    facaId = id,
-                    contorno = retangulo,
-                    fotoCorrigida = null,
-                    pxPorMm = PerspectiveCorrector.PX_POR_MM,
-                    fotoPath = null,
-                    voltarParaLista = true,
-                )
+                scope.launch {
+                    val cor = withContext(Dispatchers.IO) { repository.getById(id)?.corCapaArgb } ?: -16777216
+                    screen = MoldeVetorScreen.Validacao(
+                        facaId = id,
+                        contorno = retangulo,
+                        fotoCorrigida = null,
+                        pxPorMm = PerspectiveCorrector.PX_POR_MM,
+                        fotoPath = null,
+                        corCapaArgb = cor,
+                        voltarParaLista = false,
+                    )
+                }
             },
         )
 
         is MoldeVetorScreen.Captura -> CapturaScreen(
             facaId = atual.facaId,
             onDetectado = { contorno, fotoCorrigida, pxPorMm, fotoPath ->
-                screen = MoldeVetorScreen.Validacao(atual.facaId, contorno, fotoCorrigida, pxPorMm, fotoPath)
+                screen = MoldeVetorScreen.Validacao(
+                    atual.facaId,
+                    contorno,
+                    fotoCorrigida,
+                    pxPorMm,
+                    fotoPath,
+                    atual.corCapaArgb,
+                )
             },
             onBack = { screen = MoldeVetorScreen.Cadastro(atual.facaId) },
         )
@@ -192,12 +254,17 @@ fun MoldeVetorApp(onClose: () -> Unit) {
             contornoInicial = atual.contorno,
             fotoCorrigida = atual.fotoCorrigida,
             pxPorMm = atual.pxPorMm,
+            corCapaArgbInicial = atual.corCapaArgb,
             somenteVisualizacao = atual.somenteVisualizacao,
-            onConfirmado = { contornoConfirmado ->
-                screen = MoldeVetorScreen.Medida(atual.facaId, contornoConfirmado, atual.fotoPath)
+            onConfirmado = { contornoConfirmado, corCapaArgb ->
+                if (atual.somenteVisualizacao) {
+                    screen = MoldeVetorScreen.Lista
+                } else {
+                    salvarContornoDaEtapa(atual.facaId, contornoConfirmado, atual.fotoPath, corCapaArgb)
+                }
             },
             onBack = {
-                screen = if (atual.voltarParaLista) MoldeVetorScreen.Lista else MoldeVetorScreen.Captura(atual.facaId)
+                screen = if (atual.voltarParaLista) MoldeVetorScreen.Lista else MoldeVetorScreen.Cadastro(atual.facaId)
             },
         )
 
@@ -205,17 +272,18 @@ fun MoldeVetorApp(onClose: () -> Unit) {
             contorno = atual.contorno,
             salvando = salvandoMedida,
             erro = erroMedida,
-            onSalvar = { screen = MoldeVetorScreen.Encaixe(atual.facaId, atual.contorno, atual.fotoPath) },
+            onSalvar = { salvarContornoDaEtapa(atual.facaId, atual.contorno, atual.fotoPath) },
             onBack = { screen = MoldeVetorScreen.Cadastro(atual.facaId) },
             onAplicarCorrecao = { contornoCorrigido -> screen = atual.copy(contorno = contornoCorrigido) },
         )
 
         is MoldeVetorScreen.Encaixe -> EncaixeConsumoScreen(
             contorno = atual.contorno,
+            encaixeInicial = atual.encaixeInicial,
             salvando = salvandoMedida,
             erro = erroMedida,
-            onConfirmado = { encaixe -> salvarResultado(atual.facaId, atual.contorno, encaixe, atual.fotoPath) },
-            onBack = { screen = MoldeVetorScreen.Medida(atual.facaId, atual.contorno, atual.fotoPath) },
+            onConfirmado = { encaixe -> salvarEncaixeDaEtapa(atual.facaId, encaixe) },
+            onBack = { screen = MoldeVetorScreen.Cadastro(atual.facaId) },
         )
     }
 }

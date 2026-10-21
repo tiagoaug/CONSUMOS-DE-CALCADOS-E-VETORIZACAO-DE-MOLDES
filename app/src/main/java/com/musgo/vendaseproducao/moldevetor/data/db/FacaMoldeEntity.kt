@@ -27,6 +27,9 @@ data class FacaMoldeEntity(
     // efetivo por bloco calculado a partir dela.
     val encaixeJson: String? = null,
     val consumoEncaixeM2: Double? = null,
+    // Cor sólida ARGB usada na miniatura e na capa PNG exportada. Preto é o padrão para
+    // projetos novos e para bancos/projetos antigos que ainda não possuíam esta configuração.
+    val corCapaArgb: Int = -16777216,
     val fotoPath: String? = null,
     val createdAt: Long,
     val updatedAt: Long,

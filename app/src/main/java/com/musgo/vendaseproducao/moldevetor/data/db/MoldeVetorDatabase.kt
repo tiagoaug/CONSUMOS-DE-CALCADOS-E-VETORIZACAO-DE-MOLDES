@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 // PrintStudioDatabase nem com nenhum outro módulo nativo.
 @Database(
     entities = [FacaMoldeEntity::class, GrupoModeloEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class MoldeVetorDatabase : RoomDatabase() {
@@ -47,13 +47,19 @@ abstract class MoldeVetorDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE faca_moldes ADD COLUMN corCapaArgb INTEGER NOT NULL DEFAULT -16777216")
+            }
+        }
+
         fun getInstance(context: Context): MoldeVetorDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     MoldeVetorDatabase::class.java,
                     "molde_vetor.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
             }
     }
 }

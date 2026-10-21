@@ -72,6 +72,9 @@ fun CadastroFacaScreen(
     onBack: () -> Unit,
     onGerenciarGrupos: () -> Unit,
     onVetorizar: (Long) -> Unit,
+    onEditarVetorizacao: (Long) -> Unit,
+    onConferirDesvio: (Long) -> Unit,
+    onEditarEncaixe: (Long) -> Unit,
     onCriarManual: (Long, larguraMm: Double, alturaMm: Double) -> Unit,
     somenteImportacao: Boolean = false,
     onImportado: (Long) -> Unit = {},
@@ -85,6 +88,8 @@ fun CadastroFacaScreen(
     var observacoes by remember { mutableStateOf("") }
     var areaM2Atual by remember { mutableStateOf<Double?>(null) }
     var consumoEncaixeM2Atual by remember { mutableStateOf<Double?>(null) }
+    var temContorno by remember { mutableStateOf(false) }
+    var temEncaixe by remember { mutableStateOf(false) }
     var erro by remember { mutableStateOf<String?>(null) }
     var salvando by remember { mutableStateOf(false) }
     var mostrarDialogoManual by remember { mutableStateOf(false) }
@@ -103,6 +108,8 @@ fun CadastroFacaScreen(
                 observacoes = faca.observacoes ?: ""
                 areaM2Atual = faca.areaM2
                 consumoEncaixeM2Atual = faca.consumoEncaixeM2
+                temContorno = !faca.contornoJson.isNullOrBlank()
+                temEncaixe = !faca.encaixeJson.isNullOrBlank()
             }
         }
     }
@@ -286,7 +293,7 @@ fun CadastroFacaScreen(
                 }
 
                 if (facaId != null) {
-                    SecaoCadastro(titulo = "Vetorizações") {
+                    SecaoCadastro(titulo = "Etapas do projeto") {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Icon(Icons.Filled.Straighten, contentDescription = null, tint = Color(0xFF2563EB))
                             Column {
@@ -305,11 +312,41 @@ fun CadastroFacaScreen(
                             }
                         }
                         if (!somenteImportacao) {
-                            OutlinedButton(
-                                onClick = { onVetorizar(facaId) },
-                                modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                            ) {
-                                Text(if (areaM2Atual != null) "Vetorizar novamente" else "Vetorizar foto (Beta)")
+                            Spacer(Modifier.height(14.dp))
+                            EtapaProjetoCard(
+                                numero = 1,
+                                titulo = "Vetorização",
+                                legenda = "Capture a foto ou edite os pontos do vetor já salvo.",
+                                concluida = temContorno,
+                                habilitada = true,
+                                acao = if (temContorno) "Editar vetor" else "Iniciar vetorização",
+                                onClick = { if (temContorno) onEditarVetorizacao(facaId) else onVetorizar(facaId) },
+                            )
+                            EtapaProjetoCard(
+                                numero = 2,
+                                titulo = "Conferência de desvio",
+                                legenda = "Confira a medida real e aplique a correção sem alterar o encaixe salvo.",
+                                concluida = temContorno && areaM2Atual != null,
+                                habilitada = temContorno,
+                                acao = "Conferir desvio",
+                                onClick = { onConferirDesvio(facaId) },
+                            )
+                            EtapaProjetoCard(
+                                numero = 3,
+                                titulo = "Encaixe e consumo",
+                                legenda = "Edite a disposição salva dos blocos, dimensões, rotações e afastamentos.",
+                                concluida = temEncaixe,
+                                habilitada = temContorno,
+                                acao = if (temEncaixe) "Editar encaixe salvo" else "Montar encaixe",
+                                onClick = { onEditarEncaixe(facaId) },
+                            )
+                            if (temContorno) {
+                                OutlinedButton(
+                                    onClick = { onVetorizar(facaId) },
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                ) {
+                                    Text("Fazer nova captura da faca")
+                                }
                             }
                             OutlinedButton(
                                 onClick = { mostrarDialogoManual = true },
@@ -359,6 +396,55 @@ fun CadastroFacaScreen(
                 TextButton(onClick = { uriImportacaoConflito = null }) { Text("Cancelar") }
             },
         )
+    }
+}
+
+@Composable
+private fun EtapaProjetoCard(
+    numero: Int,
+    titulo: String,
+    legenda: String,
+    concluida: Boolean,
+    habilitada: Boolean,
+    acao: String,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+        border = BorderStroke(1.dp, if (concluida) Color(0xFFA7F3D0) else Color(0xFFE2E8F0)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "$numero.",
+                    color = Color(0xFF4F46E5),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .padding(top = 1.dp),
+                )
+                Column(Modifier.weight(1f)) {
+                    Text("Etapa $numero · $titulo", fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
+                    Text(legenda, fontSize = 12.sp, color = Color(0xFF64748B), modifier = Modifier.padding(top = 3.dp))
+                    Text(
+                        if (concluida) "Salva no projeto" else if (habilitada) "Pendente" else "Conclua a etapa anterior",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (concluida) Color(0xFF047857) else Color(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 5.dp),
+                    )
+                }
+            }
+            OutlinedButton(
+                onClick = onClick,
+                enabled = habilitada,
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+            ) {
+                Text(acao)
+            }
+        }
     }
 }
 

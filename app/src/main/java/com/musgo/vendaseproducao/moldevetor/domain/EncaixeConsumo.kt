@@ -27,6 +27,9 @@ data class EncaixeConsumo(
     val afastamentoHorizontalMm: Double = 5.0,
     val afastamentoVerticalMm: Double = 5.0,
     val instancias: List<InstanciaEncaixe>,
+    /** Margem interna entre a borda da folha e os blocos. Faz parte da configuração do encaixe
+     * e precisa sobreviver ao fechamento e à reabertura do projeto. */
+    val margemModuloMm: Double = 0.0,
 ) {
     val areaModuloMm2: Double get() = larguraMm.coerceAtLeast(0.0) * alturaMm.coerceAtLeast(0.0)
     val consumoPorBlocoMm2: Double get() = if (instancias.isEmpty()) 0.0 else areaModuloMm2 / instancias.size

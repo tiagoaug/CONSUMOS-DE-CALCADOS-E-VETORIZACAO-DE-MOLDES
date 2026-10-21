@@ -14,6 +14,14 @@ import kotlinx.serialization.json.Json
 
 /** Manifesto versionado gravado dentro do pacote .bloco. */
 @Serializable
+internal data class EtapasProjetoFaca(
+    val ordem: List<String> = listOf("vetorizacao", "conferencia_desvio", "encaixe_consumo"),
+    val vetorizacaoSalva: Boolean,
+    val conferenciaDesvioSalva: Boolean,
+    val encaixeSalvo: Boolean,
+)
+
+@Serializable
 internal data class ManifestoProjetoFaca(
     val formato: String = FacaProjetoArquivo.FORMATO,
     val versao: Int = FacaProjetoArquivo.VERSAO_ATUAL,
@@ -30,9 +38,45 @@ internal data class ManifestoProjetoFaca(
     val areaAnteriorJson: String? = null,
     val encaixeJson: String? = null,
     val consumoEncaixeM2: Double? = null,
+    val corCapaArgb: Int = -16777216,
     val createdAt: Long,
     val updatedAt: Long,
     val fotoArquivo: String? = null,
+    val capaVetorArquivo: String? = null,
+    val capaVetorMimeType: String? = null,
+    val encaixePdfArquivo: String? = null,
+    val encaixePdfMimeType: String? = null,
+    val instrucoesArquivo: String? = null,
+    val etapas: EtapasProjetoFaca? = null,
+)
+
+@Serializable
+internal data class RecursoImportacaoFaca(
+    val arquivo: String,
+    val mimeType: String,
+    val finalidade: String,
+    val campoDestino: String,
+)
+
+@Serializable
+internal data class ConsumoImportacaoFaca(
+    val valorM2PorBloco: Double? = null,
+    val unidade: String = "m2_por_bloco",
+    val campoOrigem: String = "projeto.json#consumoEncaixeM2",
+    val campoDestino: String = "metadata.sizeAreas[numeracao_escolhida]",
+    val aplicarAutomaticamente: Boolean = false,
+    val instrucao: String = "Exibir o valor importado e deixar o usuário escolher a numeração da grade antes de aplicar.",
+)
+
+@Serializable
+internal data class InstrucoesImportacaoFaca(
+    val formato: String = "MUSGO_IMPORTACAO_FACA",
+    val versao: Int = 1,
+    val arquivoProjeto: String = "projeto.json",
+    val capa: RecursoImportacaoFaca? = null,
+    val encaixe: RecursoImportacaoFaca? = null,
+    val consumo: ConsumoImportacaoFaca,
+    val compatibilidade: String = "O importador deve aceitar MUSGO_BLOCO versões 1 e 2; na versão 1, gerar capa e PDF a partir dos JSONs.",
 )
 
 internal data class ProjetoFacaLido(
@@ -42,13 +86,17 @@ internal data class ProjetoFacaLido(
 
 /**
  * Pacote completo e portátil da faca. O ZIP usa a extensão amigável `.bloco` e contém:
- * `projeto.json` (cadastro, contorno, camadas/blocos, áreas e encaixe) e a foto original.
+ * `projeto.json`, `instrucoes.json`, a foto original e, quando disponíveis, a capa vetorial PNG
+ * e o PDF do encaixe.
  */
 internal object FacaProjetoArquivo {
     const val FORMATO = "MUSGO_BLOCO"
-    const val VERSAO_ATUAL = 1
+    const val VERSAO_ATUAL = 2
     const val MIME_TYPE = "application/octet-stream"
     private const val MANIFESTO = "projeto.json"
+    private const val INSTRUCOES = "instrucoes.json"
+    private const val CAPA_VETOR = "vetor-capa.png"
+    private const val ENCAIXE_PDF = "encaixe.pdf"
     private const val LIMITE_MANIFESTO_BYTES = 5L * 1024L * 1024L
     private const val LIMITE_FOTO_BYTES = 150L * 1024L * 1024L
 
@@ -59,10 +107,17 @@ internal object FacaProjetoArquivo {
         ignoreUnknownKeys = true
     }
 
-    fun escrever(faca: FacaMoldeEntity, destino: OutputStream, grupoModeloNome: String? = null) {
+    fun escrever(
+        faca: FacaMoldeEntity,
+        destino: OutputStream,
+        grupoModeloNome: String? = null,
+        artefatos: ArtefatosExportacaoFaca = ArtefatosExportacaoFaca(),
+    ) {
         val foto = faca.fotoPath?.let(::File)?.takeIf { it.isFile && it.canRead() }
         val extensao = foto?.extension?.lowercase()?.takeIf { it.matches(Regex("[a-z0-9]{1,5}")) } ?: "jpg"
         val nomeFoto = foto?.let { "foto.$extensao" }
+        val nomeCapa = CAPA_VETOR.takeIf { artefatos.capaVetorPng?.isNotEmpty() == true }
+        val nomePdf = ENCAIXE_PDF.takeIf { artefatos.encaixePdf?.isNotEmpty() == true }
         val manifesto = ManifestoProjetoFaca(
             exportadoEm = System.currentTimeMillis(),
             codigo = faca.codigo,
@@ -77,20 +132,51 @@ internal object FacaProjetoArquivo {
             areaAnteriorJson = faca.areaAnteriorJson,
             encaixeJson = faca.encaixeJson,
             consumoEncaixeM2 = faca.consumoEncaixeM2,
+            corCapaArgb = faca.corCapaArgb,
             createdAt = faca.createdAt,
             updatedAt = faca.updatedAt,
             fotoArquivo = nomeFoto,
+            capaVetorArquivo = nomeCapa,
+            capaVetorMimeType = nomeCapa?.let { "image/png" },
+            encaixePdfArquivo = nomePdf,
+            encaixePdfMimeType = nomePdf?.let { "application/pdf" },
+            instrucoesArquivo = INSTRUCOES,
+            etapas = EtapasProjetoFaca(
+                vetorizacaoSalva = !faca.contornoJson.isNullOrBlank(),
+                conferenciaDesvioSalva = faca.areaMm2 != null,
+                encaixeSalvo = !faca.encaixeJson.isNullOrBlank(),
+            ),
+        )
+        val instrucoes = InstrucoesImportacaoFaca(
+            capa = nomeCapa?.let {
+                RecursoImportacaoFaca(
+                    arquivo = it,
+                    mimeType = "image/png",
+                    finalidade = "foto_de_capa_da_faca",
+                    campoDestino = "imageUrl",
+                )
+            },
+            encaixe = nomePdf?.let {
+                RecursoImportacaoFaca(
+                    arquivo = it,
+                    mimeType = "application/pdf",
+                    finalidade = "documento_do_encaixe_e_consumo",
+                    campoDestino = "metadata.editorEncaixePdfUrl",
+                )
+            },
+            consumo = ConsumoImportacaoFaca(valorM2PorBloco = faca.consumoEncaixeM2),
         )
 
         ZipOutputStream(destino.buffered()).use { zip ->
-            zip.putNextEntry(ZipEntry(MANIFESTO))
-            zip.write(json.encodeToString(manifesto).toByteArray(Charsets.UTF_8))
-            zip.closeEntry()
+            zip.escreverEntrada(MANIFESTO, json.encodeToString(manifesto).toByteArray(Charsets.UTF_8))
+            zip.escreverEntrada(INSTRUCOES, json.encodeToString(instrucoes).toByteArray(Charsets.UTF_8))
             if (foto != null && nomeFoto != null) {
                 zip.putNextEntry(ZipEntry(nomeFoto))
                 foto.inputStream().buffered().use { origem -> origem.copyTo(zip) }
                 zip.closeEntry()
             }
+            if (nomeCapa != null) zip.escreverEntrada(nomeCapa, artefatos.capaVetorPng!!)
+            if (nomePdf != null) zip.escreverEntrada(nomePdf, artefatos.encaixePdf!!)
         }
     }
 
@@ -152,5 +238,11 @@ internal object FacaProjetoArquivo {
             require(total <= limite) { "Arquivo de projeto excede o limite permitido." }
             destino.write(buffer, 0, lidos)
         }
+    }
+
+    private fun ZipOutputStream.escreverEntrada(nome: String, conteudo: ByteArray) {
+        putNextEntry(ZipEntry(nome))
+        write(conteudo)
+        closeEntry()
     }
 }

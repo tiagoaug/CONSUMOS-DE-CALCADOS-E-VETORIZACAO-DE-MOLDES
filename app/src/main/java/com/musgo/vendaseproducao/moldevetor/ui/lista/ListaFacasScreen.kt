@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -53,7 +52,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -87,7 +85,6 @@ private enum class FiltroStatus(val label: String) {
 fun ListaFacasScreen(
     repository: FacaMoldeRepository,
     onFacaSelecionada: (id: Long) -> Unit,
-    onVisualizarBloco: (id: Long) -> Unit,
     onEditarBloco: (id: Long) -> Unit,
     onNovaFaca: () -> Unit,
     onBack: () -> Unit,
@@ -153,7 +150,7 @@ fun ListaFacasScreen(
                         } ?: throw IllegalStateException("Não foi possível criar o arquivo BLOCO.")
                     }
                     mensagemArquivoErro = false
-                    mensagemArquivo = "Arquivo ${faca.codigo}.bloco salvo com foto e projeto completo."
+                    mensagemArquivo = "Arquivo ${faca.codigo}.bloco salvo com capa vetorial, PDF do encaixe, consumo e instruções JSON."
                     pendingArquivar = faca
                 } catch (erro: Exception) {
                     mensagemArquivoErro = true
@@ -279,7 +276,7 @@ fun ListaFacasScreen(
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
                                 Row(verticalAlignment = Alignment.Top) {
-                                    MiniaturaFaca(faca.contornoJson)
+                                    MiniaturaFaca(faca.contornoJson, faca.corCapaArgb)
                                     Column(
                                         modifier = Modifier.weight(1f).padding(start = 10.dp).clickable { onFacaSelecionada(faca.id) },
                                     ) {
@@ -308,9 +305,6 @@ fun ListaFacasScreen(
                                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                                     horizontalArrangement = Arrangement.End,
                                 ) {
-                                    IconButton(onClick = { onVisualizarBloco(faca.id) }, modifier = Modifier.size(34.dp)) {
-                                        Icon(Icons.Filled.Visibility, contentDescription = "Visualizar bloco", modifier = Modifier.size(18.dp))
-                                    }
                                     IconButton(onClick = { onEditarBloco(faca.id) }, modifier = Modifier.size(34.dp)) {
                                         Icon(Icons.Filled.Edit, contentDescription = "Editar bloco", modifier = Modifier.size(18.dp))
                                     }
@@ -404,7 +398,7 @@ fun ListaFacasScreen(
             onDismissRequest = { blocoImportadoDisponivel = null },
             title = { Text("BLOCO importado") },
             text = {
-                Text("${bloco.codigo} — ${bloco.nome} está disponível. Deseja somente visualizar ou abrir agora no editor de facas?")
+                Text("${bloco.codigo} — ${bloco.nome} está disponível. Deseja abrir agora no editor de facas?")
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -415,8 +409,7 @@ fun ListaFacasScreen(
             dismissButton = {
                 TextButton(onClick = {
                     blocoImportadoDisponivel = null
-                    onVisualizarBloco(bloco.id)
-                }) { Text("Visualizar") }
+                }) { Text("Agora não") }
             },
         )
     }
@@ -449,7 +442,7 @@ fun ListaFacasScreen(
  * representativo como miniatura". Neutra (cinza claro) quando ainda não tem contorno
  * vetorizado, igual ao resto do card (branco puro + cinza neutro). */
 @Composable
-private fun MiniaturaFaca(contornoJson: String?) {
+private fun MiniaturaFaca(contornoJson: String?, corCapaArgb: Int) {
     val pontos = remember(contornoJson) {
         contornoJson?.let { runCatching { ContornoJsonMapper.deJson(it).externo }.getOrNull() }
     }
@@ -479,8 +472,7 @@ private fun MiniaturaFaca(contornoJson: String?) {
                     }
                     close()
                 }
-                drawPath(caminho, color = Color(0xFF2563EB).copy(alpha = 0.12f))
-                drawPath(caminho, color = Color(0xFF2563EB), style = Stroke(width = 2.5f))
+                drawPath(caminho, color = Color(corCapaArgb or -16777216))
             }
         }
     }

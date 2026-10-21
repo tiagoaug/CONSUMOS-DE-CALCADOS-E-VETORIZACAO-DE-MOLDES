@@ -14,6 +14,7 @@ object EncaixeJsonMapper {
         put("deslocamentoMm", encaixe.deslocamentoMm)
         put("afastamentoHorizontalMm", encaixe.afastamentoHorizontalMm)
         put("afastamentoVerticalMm", encaixe.afastamentoVerticalMm)
+        put("margemModuloMm", encaixe.margemModuloMm)
         put("instancias", JSONArray().apply {
             encaixe.instancias.forEach { item ->
                 put(JSONObject().apply {
@@ -55,6 +56,7 @@ object EncaixeJsonMapper {
                     travada = item.optBoolean("travada", false),
                 )
             },
+            margemModuloMm = json.optDouble("margemModuloMm", 0.0),
         )
     }
 }

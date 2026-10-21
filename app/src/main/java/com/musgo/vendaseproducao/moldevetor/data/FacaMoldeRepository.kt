@@ -28,6 +28,7 @@ data class FacaMoldeSummary(
     val status: String,
     val areaM2: Double?,
     val consumoEncaixeM2: Double?,
+    val corCapaArgb: Int,
     val updatedAt: Long,
     val contornoJson: String?,
 )
@@ -155,11 +156,15 @@ class FacaMoldeRepository(
         removerFotoInterna(atual?.fotoPath)
     }
 
-    /** Exporta cadastro, vetores, blocos/camadas, áreas, encaixe e foto num único `.bloco`. */
+    /**
+     * Exporta cadastro, vetores, blocos/camadas, áreas e foto num único `.bloco`. A versão 2
+     * também inclui uma capa PNG do vetor, o encaixe em PDF e instruções JSON para o importador.
+     */
     suspend fun exportarBloco(id: Long, destino: OutputStream) {
         val faca = dao.getById(id) ?: throw IllegalStateException("Bloco não encontrado (id=$id).")
         val grupoNome = faca.grupoModeloId?.let { grupoDao.getById(it)?.nome }
-        FacaProjetoArquivo.escrever(faca, destino, grupoNome)
+        val artefatos = FacaArtefatosExportacao.gerar(faca)
+        FacaProjetoArquivo.escrever(faca, destino, grupoNome, artefatos)
     }
 
     /**
@@ -207,6 +212,7 @@ class FacaMoldeRepository(
                     areaAnteriorJson = dados.areaAnteriorJson,
                     encaixeJson = dados.encaixeJson,
                     consumoEncaixeM2 = dados.consumoEncaixeM2,
+                    corCapaArgb = dados.corCapaArgb,
                     fotoPath = fotoNova,
                     createdAt = dados.createdAt,
                     updatedAt = agora,
@@ -225,6 +231,7 @@ class FacaMoldeRepository(
                     areaAnteriorJson = dados.areaAnteriorJson,
                     encaixeJson = dados.encaixeJson,
                     consumoEncaixeM2 = dados.consumoEncaixeM2,
+                    corCapaArgb = dados.corCapaArgb,
                     fotoPath = fotoNova,
                     updatedAt = agora,
                 )
@@ -242,18 +249,18 @@ class FacaMoldeRepository(
         }
     }
 
-    /** Grava o resultado de uma vetorização (Fases 3-4: captura → detecção → validação) — chamado
-     * só depois que o usuário confirma o contorno (com ou sem ajuste manual de vértices, Fase 4).
-     * Mantém a área anterior em [FacaMoldeEntity.areaAnteriorJson] como histórico (pedido do
-     * Tiago: "manter histórico da área anterior" ao revetorizar uma faca já cadastrada). */
-    suspend fun salvarResultadoVetorizacao(id: Long, contorno: Contorno, encaixe: EncaixeConsumo, fotoPath: String?) {
+    /** Salva somente vetorização/conferência. O encaixe existente é preservado: editar pontos
+     * ou conferir o desvio nunca pode apagar a disposição já montada. */
+    suspend fun salvarEtapaContorno(id: Long, contorno: Contorno, fotoPath: String?, corCapaArgb: Int? = null) {
         val atual = dao.getById(id) ?: throw IllegalStateException("Faca não encontrada (id=$id).")
         val areaMm2 = CalculoArea.calcularAreaMm2(contorno)
         val areaM2 = CalculoArea.mm2ParaM2(areaMm2)
         val fotoFinal = fotoPath ?: atual.fotoPath
 
         val historico = JSONArray(atual.areaAnteriorJson ?: "[]")
-        if (atual.areaMm2 != null) historico.put(atual.areaMm2)
+        if (atual.areaMm2 != null && kotlin.math.abs(atual.areaMm2 - areaMm2) > 1e-6) {
+            historico.put(atual.areaMm2)
+        }
 
         dao.update(
             atual.copy(
@@ -261,13 +268,30 @@ class FacaMoldeRepository(
                 areaMm2 = areaMm2,
                 areaM2 = areaM2,
                 areaAnteriorJson = historico.toString(),
-                encaixeJson = EncaixeJsonMapper.paraJson(encaixe),
-                consumoEncaixeM2 = encaixe.consumoPorBlocoM2,
+                corCapaArgb = corCapaArgb ?: atual.corCapaArgb,
                 fotoPath = fotoFinal,
                 updatedAt = System.currentTimeMillis(),
             ),
         )
         if (fotoPath != null && atual.fotoPath != fotoFinal) removerFotoInterna(atual.fotoPath)
+    }
+
+    /** Salva apenas o encaixe/consumo, incluindo toda a disposição, sem alterar o vetor. */
+    suspend fun salvarEtapaEncaixe(id: Long, encaixe: EncaixeConsumo) {
+        val atual = dao.getById(id) ?: throw IllegalStateException("Faca não encontrada (id=$id).")
+        dao.update(
+            atual.copy(
+                encaixeJson = EncaixeJsonMapper.paraJson(encaixe),
+                consumoEncaixeM2 = encaixe.consumoPorBlocoM2,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /** Compatibilidade com o fluxo antigo que confirmava todas as etapas de uma só vez. */
+    suspend fun salvarResultadoVetorizacao(id: Long, contorno: Contorno, encaixe: EncaixeConsumo, fotoPath: String?) {
+        salvarEtapaContorno(id, contorno, fotoPath)
+        salvarEtapaEncaixe(id, encaixe)
     }
 
     private fun removerFotoInterna(caminho: String?) {
@@ -293,6 +317,7 @@ private fun FacaMoldeEntity.toSummary(grupoModeloNome: String?) = FacaMoldeSumma
     status = status,
     areaM2 = areaM2,
     consumoEncaixeM2 = consumoEncaixeM2,
+    corCapaArgb = corCapaArgb,
     updatedAt = updatedAt,
     contornoJson = contornoJson,
 )

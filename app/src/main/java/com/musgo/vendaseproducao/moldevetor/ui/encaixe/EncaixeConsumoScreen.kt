@@ -88,6 +88,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -120,6 +121,12 @@ import com.musgo.vendaseproducao.moldevetor.domain.EncaixeConsumo
 import com.musgo.vendaseproducao.moldevetor.domain.InstanciaEncaixe
 import com.musgo.vendaseproducao.moldevetor.domain.Ponto
 import com.musgo.vendaseproducao.moldevetor.domain.TipoModuloEncaixe
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
@@ -141,6 +148,23 @@ private data class LimitesBloco(val esquerda: Float, val topo: Float, val direit
 }
 private data class GuiaAlinhamento(val horizontal: Boolean, val valorMm: Float)
 private data class TamanhoFolha(val nome: String, val larguraMm: Float, val alturaMm: Float)
+private data class PoligonoPosicionado(val pontos: List<Offset>, val limites: LimitesBloco)
+private data class ResultadoPreenchimento(
+    val instancias: List<InstanciaEncaixe>,
+    val adicionados: Int,
+    val limiteAtingido: Boolean,
+)
+private data class ResultadoAjusteRetangulo(
+    val instancias: List<InstanciaEncaixe>,
+    val larguraMm: Float,
+    val alturaMm: Float,
+    val afastamentosCorrigidos: Boolean,
+)
+
+private const val LIMITE_INSTANCIAS_PREENCHIMENTO = 600
+private const val LIMITE_TENTATIVAS_PREENCHIMENTO = 20_000
+private const val LIMITE_TENTATIVAS_BUSCA = 10_000
+private const val FOLGA_AJUSTE_RETANGULO_MM = 0.05f
 
 /** Categorias do painel de ferramentas, sempre visíveis como abas — pedido do Tiago: "crie a
  * mesma tela de edição de facas, mesmo estilo de área de visualização e ferramentas, cards para
@@ -154,6 +178,94 @@ private data class TamanhoFolha(val nome: String, val larguraMm: Float, val altu
 // e seleção" — espelha as categorias do editor de facas (Seleção/Transformação/Visualização).
 private enum class CategoriaEncaixe { BLOCOS, SELECAO, TRANSFORMAR, VISUALIZACAO, RESULTADO, CONFIGURACOES }
 private enum class ModoSelecaoEncaixe { MULTI_TOQUE, ARRASTO }
+
+private fun tituloCategoriaEncaixe(categoria: CategoriaEncaixe) = when (categoria) {
+    CategoriaEncaixe.BLOCOS -> "Blocos"
+    CategoriaEncaixe.SELECAO -> "Seleção"
+    CategoriaEncaixe.TRANSFORMAR -> "Transformar"
+    CategoriaEncaixe.VISUALIZACAO -> "Visualização"
+    CategoriaEncaixe.RESULTADO -> "Resultado"
+    CategoriaEncaixe.CONFIGURACOES -> "Configurações"
+}
+
+private fun iconeCategoriaEncaixe(categoria: CategoriaEncaixe) = when (categoria) {
+    CategoriaEncaixe.BLOCOS -> Icons.Filled.ViewModule
+    CategoriaEncaixe.SELECAO -> Icons.Filled.CropFree
+    CategoriaEncaixe.TRANSFORMAR -> Icons.Filled.OpenWith
+    CategoriaEncaixe.VISUALIZACAO -> Icons.Filled.PanTool
+    CategoriaEncaixe.RESULTADO -> Icons.Filled.CheckBox
+    CategoriaEncaixe.CONFIGURACOES -> Icons.Filled.Settings
+}
+
+private fun corCategoriaEncaixe(categoria: CategoriaEncaixe) = when (categoria) {
+    CategoriaEncaixe.BLOCOS -> Color(0xFF16A34A)
+    CategoriaEncaixe.SELECAO -> Color(0xFF2563EB)
+    CategoriaEncaixe.TRANSFORMAR -> Color(0xFFF97316)
+    CategoriaEncaixe.VISUALIZACAO -> Color(0xFF0891B2)
+    CategoriaEncaixe.RESULTADO -> Color(0xFF059669)
+    CategoriaEncaixe.CONFIGURACOES -> Color(0xFF0F6CBD)
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BarraCategoriasEncaixe(
+    categoria: CategoriaEncaixe,
+    compacta: Boolean,
+    modifier: Modifier = Modifier,
+    onSelecionar: (CategoriaEncaixe) -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFFF8FAFC))
+            .border(1.dp, Borda, RoundedCornerShape(14.dp))
+            .padding(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        CategoriaEncaixe.entries.toList().chunked(3).forEach { categoriasDaLinha ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (compacta) 28.dp else 34.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                categoriasDaLinha.forEach { cat ->
+                    val titulo = if (cat == CategoriaEncaixe.CONFIGURACOES) "Config." else tituloCategoriaEncaixe(cat)
+                    val icone = iconeCategoriaEncaixe(cat)
+                    val corCategoria = corCategoriaEncaixe(cat)
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (categoria == cat) corCategoria else Fundo)
+                            .clickable { onSelecionar(cat) }
+                            .padding(horizontal = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        if (!compacta) {
+                            Icon(
+                                icone,
+                                contentDescription = null,
+                                tint = if (categoria == cat) Color.White else corCategoria,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                        }
+                        Text(
+                            titulo,
+                            fontSize = if (compacta) 8.sp else 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (categoria == cat) Color.White else Texto,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 private val TamanhosFolha = listOf(
     TamanhoFolha("1 × 1 m", 1000f, 1000f),
@@ -180,14 +292,21 @@ private fun pontosTransformados(item: InstanciaEncaixe, bloco: BlocoBase): List<
     }
 }
 
-private fun limitesBloco(item: InstanciaEncaixe, bloco: BlocoBase): LimitesBloco {
-    val girados = pontosTransformados(item, bloco)
+private fun limitesPontos(pontos: List<Offset>): LimitesBloco {
     return LimitesBloco(
-        esquerda = girados.minOf { it.x },
-        topo = girados.minOf { it.y },
-        direita = girados.maxOf { it.x },
-        base = girados.maxOf { it.y },
+        esquerda = pontos.minOf { it.x },
+        topo = pontos.minOf { it.y },
+        direita = pontos.maxOf { it.x },
+        base = pontos.maxOf { it.y },
     )
+}
+
+private fun limitesBloco(item: InstanciaEncaixe, bloco: BlocoBase): LimitesBloco =
+    limitesPontos(pontosTransformados(item, bloco))
+
+private fun poligonoPosicionado(item: InstanciaEncaixe, bloco: BlocoBase): PoligonoPosicionado {
+    val pontos = pontosTransformados(item, bloco)
+    return PoligonoPosicionado(pontos, limitesPontos(pontos))
 }
 
 private fun cruzamento(a: Offset, b: Offset, c: Offset): Float =
@@ -238,8 +357,25 @@ private fun blocosRespeitamAfastamento(
     b: List<Offset>,
     afastamentoHorizontalMm: Float,
     afastamentoVerticalMm: Float,
+    limitesA: LimitesBloco = limitesPontos(a),
+    limitesB: LimitesBloco = limitesPontos(b),
 ): Boolean {
     if (a.size < 3 || b.size < 3) return true
+
+    // A caixa delimitadora elimina quase todas as comparações sem percorrer cada par de
+    // arestas. A verificação detalhada O(vértices²) só é necessária quando as caixas se
+    // sobrepõem nos dois eixos.
+    val gapX = max(0f, max(limitesA.esquerda, limitesB.esquerda) - min(limitesA.direita, limitesB.direita))
+    val gapY = max(0f, max(limitesA.topo, limitesB.topo) - min(limitesA.base, limitesB.base))
+    val tolerancia = 0.001f
+    if (gapX > tolerancia || gapY > tolerancia) {
+        return when {
+            gapX > tolerancia && gapY <= tolerancia -> gapX + tolerancia >= afastamentoHorizontalMm
+            gapY > tolerancia && gapX <= tolerancia -> gapY + tolerancia >= afastamentoVerticalMm
+            else -> gapX + tolerancia >= afastamentoHorizontalMm || gapY + tolerancia >= afastamentoVerticalMm
+        }
+    }
+
     for (i in a.indices) {
         val a1 = a[i]
         val a2 = a[(i + 1) % a.size]
@@ -250,26 +386,205 @@ private fun blocosRespeitamAfastamento(
         }
     }
     if (pontoDentroDoPoligono(a.first(), b) || pontoDentroDoPoligono(b.first(), a)) return false
+    return true
+}
 
-    val minXA = a.minOf { it.x }; val maxXA = a.maxOf { it.x }
-    val minYA = a.minOf { it.y }; val maxYA = a.maxOf { it.y }
-    val minXB = b.minOf { it.x }; val maxXB = b.maxOf { it.x }
-    val minYB = b.minOf { it.y }; val maxYB = b.maxOf { it.y }
-    val gapX = max(0f, max(minXA, minXB) - min(maxXA, maxXB))
-    val gapY = max(0f, max(minYA, minYB) - min(maxYA, maxYB))
-    val tolerancia = 0.001f
-    return when {
-        gapX > tolerancia && gapY <= tolerancia -> gapX + tolerancia >= afastamentoHorizontalMm
-        gapY > tolerancia && gapX <= tolerancia -> gapY + tolerancia >= afastamentoVerticalMm
-        gapX > tolerancia && gapY > tolerancia -> gapX + tolerancia >= afastamentoHorizontalMm || gapY + tolerancia >= afastamentoVerticalMm
-        else -> true
+private suspend fun calcularPreenchimentoFolha(
+    padraoOriginal: List<InstanciaEncaixe>,
+    blocos: List<BlocoBase>,
+    larguraMm: Float,
+    alturaMm: Float,
+    margemModuloMm: Float,
+    afastamentoHorizontalMm: Float,
+    afastamentoVerticalMm: Float,
+): ResultadoPreenchimento {
+    val posicionadosOriginais = padraoOriginal.mapNotNull { item ->
+        blocos.getOrNull(item.blocoIndice)?.let { base -> poligonoPosicionado(item, base) }
     }
+    if (posicionadosOriginais.size != padraoOriginal.size || posicionadosOriginais.isEmpty()) {
+        return ResultadoPreenchimento(padraoOriginal, 0, false)
+    }
+
+    val minX = posicionadosOriginais.minOf { it.limites.esquerda }
+    val minY = posicionadosOriginais.minOf { it.limites.topo }
+    val maxX = posicionadosOriginais.maxOf { it.limites.direita }
+    val maxY = posicionadosOriginais.maxOf { it.limites.base }
+    val larguraPadrao = maxX - minX
+    val alturaPadrao = maxY - minY
+    val tileLargura = larguraPadrao + afastamentoHorizontalMm
+    val tileAltura = alturaPadrao + afastamentoVerticalMm
+    if (tileLargura <= 0f || tileAltura <= 0f) {
+        return ResultadoPreenchimento(padraoOriginal, 0, false)
+    }
+
+    val resultado = padraoOriginal.toMutableList()
+    val existentes = posicionadosOriginais.toMutableList()
+    var adicionados = 0
+    var tentativas = 0
+    var limiteAtingido = padraoOriginal.size >= LIMITE_INSTANCIAS_PREENCHIMENTO
+    var yBase = minY
+
+    busca@ while (!limiteAtingido && yBase + alturaPadrao <= alturaMm - margemModuloMm + 0.01f) {
+        var xBase = minX
+        while (xBase + larguraPadrao <= larguraMm - margemModuloMm + 0.01f) {
+            tentativas++
+            if (tentativas > LIMITE_TENTATIVAS_PREENCHIMENTO) {
+                limiteAtingido = true
+                break@busca
+            }
+            if (tentativas % 64 == 0) currentCoroutineContext().ensureActive()
+
+            val deslocX = xBase - minX
+            val deslocY = yBase - minY
+            if (abs(deslocX) > 0.01f || abs(deslocY) > 0.01f) {
+                if (resultado.size + padraoOriginal.size > LIMITE_INSTANCIAS_PREENCHIMENTO) {
+                    limiteAtingido = true
+                    break@busca
+                }
+                val candidatos = padraoOriginal.map { item ->
+                    item.copy(
+                        xMm = item.xMm + deslocX,
+                        yMm = item.yMm + deslocY,
+                        travada = false,
+                    )
+                }
+                val poligonosCandidatos = candidatos.mapNotNull { item ->
+                    blocos.getOrNull(item.blocoIndice)?.let { base -> poligonoPosicionado(item, base) }
+                }
+                val cabemNaFolha = poligonosCandidatos.size == candidatos.size &&
+                    poligonosCandidatos.all { candidato ->
+                        candidato.limites.esquerda >= margemModuloMm &&
+                            candidato.limites.topo >= margemModuloMm &&
+                            candidato.limites.direita <= larguraMm - margemModuloMm &&
+                            candidato.limites.base <= alturaMm - margemModuloMm
+                    }
+                val respeitamExistentes = cabemNaFolha && poligonosCandidatos.all { candidata ->
+                    existentes.all { existente ->
+                        blocosRespeitamAfastamento(
+                            candidata.pontos,
+                            existente.pontos,
+                            afastamentoHorizontalMm,
+                            afastamentoVerticalMm,
+                            candidata.limites,
+                            existente.limites,
+                        )
+                    }
+                }
+                if (respeitamExistentes) {
+                    resultado.addAll(candidatos)
+                    existentes.addAll(poligonosCandidatos)
+                    adicionados += candidatos.size
+                }
+            }
+            xBase += tileLargura
+        }
+        yBase += tileAltura
+    }
+
+    return ResultadoPreenchimento(resultado, adicionados, limiteAtingido)
+}
+
+private suspend fun calcularAjusteRetangulo(
+    originais: List<InstanciaEncaixe>,
+    blocos: List<BlocoBase>,
+    margemModuloMm: Float,
+    afastamentoHorizontalMm: Float,
+    afastamentoVerticalMm: Float,
+    corrigirAfastamentos: Boolean,
+): ResultadoAjusteRetangulo? {
+    if (originais.isEmpty()) return null
+    val ancoraX = originais.minOf { it.xMm }.toFloat()
+    val ancoraY = originais.minOf { it.yMm }.toFloat()
+
+    fun instanciasComFator(fator: Float): List<InstanciaEncaixe> = originais.map { item ->
+        item.copy(
+            xMm = (ancoraX + (item.xMm.toFloat() - ancoraX) * fator).toDouble(),
+            yMm = (ancoraY + (item.yMm.toFloat() - ancoraY) * fator).toDouble(),
+        )
+    }
+
+    fun posicionar(itens: List<InstanciaEncaixe>): List<PoligonoPosicionado>? {
+        val posicionados = itens.mapNotNull { item ->
+            blocos.getOrNull(item.blocoIndice)?.let { base -> poligonoPosicionado(item, base) }
+        }
+        return posicionados.takeIf { it.size == itens.size }
+    }
+
+    fun afastamentosValidos(posicionados: List<PoligonoPosicionado>): Boolean {
+        for (indice in posicionados.indices) {
+            val a = posicionados[indice]
+            for (outroIndice in indice + 1 until posicionados.size) {
+                val b = posicionados[outroIndice]
+                if (!blocosRespeitamAfastamento(
+                        a.pontos,
+                        b.pontos,
+                        afastamentoHorizontalMm,
+                        afastamentoVerticalMm,
+                        a.limites,
+                        b.limites,
+                    )
+                ) return false
+            }
+        }
+        return true
+    }
+
+    var fator = 1f
+    var ajustadas = originais
+    var posicionadas = posicionar(ajustadas) ?: return null
+    val precisavaCorrigir = corrigirAfastamentos && !afastamentosValidos(posicionadas)
+    if (precisavaCorrigir) {
+        var limiteInferior = 1f
+        var limiteSuperior = 1f
+        var encontrou = false
+        while (limiteSuperior < 64f) {
+            currentCoroutineContext().ensureActive()
+            limiteSuperior *= 2f
+            val candidatas = instanciasComFator(limiteSuperior)
+            val poligonos = posicionar(candidatas) ?: return null
+            if (afastamentosValidos(poligonos)) {
+                encontrou = true
+                break
+            }
+            limiteInferior = limiteSuperior
+        }
+        if (!encontrou) return null
+
+        repeat(18) {
+            currentCoroutineContext().ensureActive()
+            val meio = (limiteInferior + limiteSuperior) / 2f
+            val candidatas = instanciasComFator(meio)
+            val poligonos = posicionar(candidatas) ?: return null
+            if (afastamentosValidos(poligonos)) limiteSuperior = meio else limiteInferior = meio
+        }
+        fator = limiteSuperior
+        ajustadas = instanciasComFator(fator)
+        posicionadas = posicionar(ajustadas) ?: return null
+    }
+
+    val minX = posicionadas.minOf { it.limites.esquerda }
+    val minY = posicionadas.minOf { it.limites.topo }
+    val maxX = posicionadas.maxOf { it.limites.direita }
+    val maxY = posicionadas.maxOf { it.limites.base }
+    val margemSegura = margemModuloMm + FOLGA_AJUSTE_RETANGULO_MM
+    val deslocX = margemSegura - minX
+    val deslocY = margemSegura - minY
+    val reposicionadas = ajustadas.map { item ->
+        item.copy(xMm = item.xMm + deslocX, yMm = item.yMm + deslocY)
+    }
+    return ResultadoAjusteRetangulo(
+        instancias = reposicionadas,
+        larguraMm = (maxX - minX) + 2f * margemSegura,
+        alturaMm = (maxY - minY) + 2f * margemSegura,
+        afastamentosCorrigidos = precisavaCorrigir && fator > 1f,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EncaixeConsumoScreen(
     contorno: Contorno,
+    encaixeInicial: EncaixeConsumo? = null,
     salvando: Boolean,
     erro: String?,
     onConfirmado: (EncaixeConsumo) -> Unit,
@@ -281,8 +596,9 @@ fun EncaixeConsumoScreen(
     val context = LocalContext.current
     val activity = remember(context) { context.paraActivityEncaixe() }
     val density = LocalDensity.current
+    val escopoCalculo = rememberCoroutineScope()
     var telaGirada by remember { mutableStateOf(false) }
-    var fracaoVisualizacaoPaisagem by remember { mutableStateOf(0.64f) }
+    var fracaoVisualizacaoPaisagem by remember { mutableStateOf(0.68f) }
     var tamanhoAreaPaisagem by remember { mutableStateOf(IntSize.Zero) }
     var painelFerramentasCompacto by remember { mutableStateOf(false) }
     LaunchedEffect(telaGirada, activity) {
@@ -303,23 +619,55 @@ fun EncaixeConsumoScreen(
             )
         }
     }
-    var tipo by remember { mutableStateOf(TipoModuloEncaixe.RETANGULO) }
-    var larguraMm by remember { mutableStateOf(1000f) }
-    var alturaMm by remember { mutableStateOf(1000f) }
-    var larguraTexto by remember { mutableStateOf("1000") }
-    var alturaTexto by remember { mutableStateOf("1000") }
-    var deslocamentoTexto by remember { mutableStateOf("0") }
-    var tamanhoFolhaSelecionado by remember { mutableStateOf("1 × 1 m") }
+    val encaixeRestaurado = remember(contorno, encaixeInicial) {
+        encaixeInicial?.takeIf { it.larguraMm > 0.0 && it.alturaMm > 0.0 }
+    }
+    var tipo by remember(contorno, encaixeRestaurado) {
+        mutableStateOf(encaixeRestaurado?.tipo ?: TipoModuloEncaixe.RETANGULO)
+    }
+    var larguraMm by remember(contorno, encaixeRestaurado) {
+        mutableStateOf(encaixeRestaurado?.larguraMm?.toFloat() ?: 1000f)
+    }
+    var alturaMm by remember(contorno, encaixeRestaurado) {
+        mutableStateOf(encaixeRestaurado?.alturaMm?.toFloat() ?: 1000f)
+    }
+    var larguraTexto by remember(contorno, encaixeRestaurado) {
+        mutableStateOf((encaixeRestaurado?.larguraMm?.roundToInt() ?: 1000).toString())
+    }
+    var alturaTexto by remember(contorno, encaixeRestaurado) {
+        mutableStateOf((encaixeRestaurado?.alturaMm?.roundToInt() ?: 1000).toString())
+    }
+    var deslocamentoTexto by remember(contorno, encaixeRestaurado) {
+        mutableStateOf((encaixeRestaurado?.deslocamentoMm?.roundToInt() ?: 0).toString())
+    }
+    var tamanhoFolhaSelecionado by remember(contorno, encaixeRestaurado) {
+        val salvo = encaixeRestaurado
+        val tamanho = salvo?.let {
+            TamanhosFolha.firstOrNull { folha ->
+                abs(folha.larguraMm - it.larguraMm.toFloat()) < 0.01f &&
+                    abs(folha.alturaMm - it.alturaMm.toFloat()) < 0.01f
+            }?.nome
+        }
+        mutableStateOf(tamanho ?: if (salvo == null) "1 × 1 m" else "Personalizada")
+    }
     // Pedido do Tiago: "o afastamento mínimo entre blocos deve ter valor para as laterais e
     // acima e abaixo" — dois valores em vez de um só, cada um aplicado ao seu eixo (ver
     // blocosRespeitamAfastamento acima).
-    var afastamentoHorizontalMm by remember { mutableStateOf(5f) }
-    var afastamentoVerticalMm by remember { mutableStateOf(5f) }
+    var afastamentoHorizontalMm by remember(contorno, encaixeRestaurado) {
+        mutableStateOf(encaixeRestaurado?.afastamentoHorizontalMm?.toFloat() ?: 5f)
+    }
+    var afastamentoVerticalMm by remember(contorno, encaixeRestaurado) {
+        mutableStateOf(encaixeRestaurado?.afastamentoVerticalMm?.toFloat() ?: 5f)
+    }
     // Pedido do Tiago: "distância mínima da linha do retângulo ou paralelogramo aos blocos" —
     // diferente do afastamento ENTRE blocos acima: esta é a margem entre a borda do módulo
     // (retângulo/paralelogramo) e qualquer peça encostada nela.
-    var margemModuloMm by remember { mutableStateOf(0f) }
-    var deslocamentoMm by remember { mutableStateOf(0f) }
+    var margemModuloMm by remember(contorno, encaixeRestaurado) {
+        mutableStateOf(encaixeRestaurado?.margemModuloMm?.toFloat() ?: 0f)
+    }
+    var deslocamentoMm by remember(contorno, encaixeRestaurado) {
+        mutableStateOf(encaixeRestaurado?.deslocamentoMm?.toFloat() ?: 0f)
+    }
     var blocoParaAdicionar by remember { mutableStateOf(0) }
     var selecionado by remember { mutableStateOf(0) }
     // Pedido do Tiago: "crie em transformar/blocos, selecionar blocos, crie um popup ao clicar
@@ -342,12 +690,17 @@ fun EncaixeConsumoScreen(
     var referenciaAlinhamento by remember { mutableStateOf(if (blocos.size > 1) 1 else 0) }
     var guiasAlinhamento by remember { mutableStateOf(listOf<GuiaAlinhamento>()) }
     var mensagemPosicionamento by remember { mutableStateOf<String?>(null) }
+    var calculandoEncaixe by remember { mutableStateOf(false) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-    var instancias by remember {
+    var instancias by remember(contorno, encaixeRestaurado) {
+        val salvas = encaixeRestaurado?.instancias.orEmpty().filter { it.blocoIndice in blocos.indices }
         var cursor = 5f
-        mutableStateOf(blocos.mapIndexed { indice, bloco ->
-            InstanciaEncaixe(indice, cursor.toDouble(), 5.0).also { cursor += bloco.largura + 5f }
-        })
+        val iniciais = salvas.ifEmpty {
+            blocos.mapIndexed { indice, bloco ->
+                InstanciaEncaixe(indice, cursor.toDouble(), 5.0).also { cursor += bloco.largura + 5f }
+            }
+        }
+        mutableStateOf(iniciais)
     }
 
     val areaRealMm2 = remember(contorno) { CalculoArea.calcularAreaMm2(contorno) }
@@ -356,30 +709,57 @@ fun EncaixeConsumoScreen(
 
     fun instanciaValida(candidata: InstanciaEncaixe, indicesIgnorados: Set<Int>): Boolean {
         val bloco = blocos.getOrNull(candidata.blocoIndice) ?: return false
-        val pontosCandidata = pontosTransformados(candidata, bloco)
-        val limites = limitesBloco(candidata, bloco)
+        val poligonoCandidato = poligonoPosicionado(candidata, bloco)
+        val limites = poligonoCandidato.limites
         if (limites.esquerda < margemModuloMm || limites.topo < margemModuloMm || limites.direita > larguraMm - margemModuloMm || limites.base > alturaMm - margemModuloMm) return false
         return instancias.indices.all { indice ->
             if (indice in indicesIgnorados) return@all true
             val outra = instancias[indice]
             val baseOutra = blocos.getOrNull(outra.blocoIndice) ?: return@all true
-            blocosRespeitamAfastamento(pontosCandidata, pontosTransformados(outra, baseOutra), afastamentoHorizontalMm, afastamentoVerticalMm)
+            val outroPoligono = poligonoPosicionado(outra, baseOutra)
+            blocosRespeitamAfastamento(
+                poligonoCandidato.pontos,
+                outroPoligono.pontos,
+                afastamentoHorizontalMm,
+                afastamentoVerticalMm,
+                poligonoCandidato.limites,
+                outroPoligono.limites,
+            )
         }
     }
     fun instanciaValida(candidata: InstanciaEncaixe, indiceIgnorado: Int): Boolean = instanciaValida(candidata, setOf(indiceIgnorado))
 
-    val indicesComConflito = buildSet {
-        instancias.forEachIndexed { indice, item ->
-            val base = blocos.getOrNull(item.blocoIndice) ?: return@forEachIndexed
-            val pontosA = pontosTransformados(item, base)
-            val a = limitesBloco(item, base)
-            if (a.esquerda < margemModuloMm || a.topo < margemModuloMm || a.direita > larguraMm - margemModuloMm || a.base > alturaMm - margemModuloMm) add(indice)
-            for (outroIndice in indice + 1 until instancias.size) {
-                val outro = instancias[outroIndice]
-                val baseOutra = blocos.getOrNull(outro.blocoIndice) ?: continue
-                if (!blocosRespeitamAfastamento(pontosA, pontosTransformados(outro, baseOutra), afastamentoHorizontalMm, afastamentoVerticalMm)) {
-                    add(indice)
-                    add(outroIndice)
+    val indicesComConflito = remember(
+        instancias,
+        blocos,
+        larguraMm,
+        alturaMm,
+        margemModuloMm,
+        afastamentoHorizontalMm,
+        afastamentoVerticalMm,
+    ) {
+        val posicionados = instancias.map { item ->
+            blocos.getOrNull(item.blocoIndice)?.let { base -> poligonoPosicionado(item, base) }
+        }
+        buildSet {
+            posicionados.forEachIndexed { indice, poligonoA ->
+                poligonoA ?: return@forEachIndexed
+                val a = poligonoA.limites
+                if (a.esquerda < margemModuloMm || a.topo < margemModuloMm || a.direita > larguraMm - margemModuloMm || a.base > alturaMm - margemModuloMm) add(indice)
+                for (outroIndice in indice + 1 until posicionados.size) {
+                    val poligonoB = posicionados[outroIndice] ?: continue
+                    if (!blocosRespeitamAfastamento(
+                            poligonoA.pontos,
+                            poligonoB.pontos,
+                            afastamentoHorizontalMm,
+                            afastamentoVerticalMm,
+                            poligonoA.limites,
+                            poligonoB.limites,
+                        )
+                    ) {
+                        add(indice)
+                        add(outroIndice)
+                    }
                 }
             }
         }
@@ -396,10 +776,12 @@ fun EncaixeConsumoScreen(
 
     fun encontrarPosicaoLivre(modelo: InstanciaEncaixe): InstanciaEncaixe? {
         val passoBusca = max(10f, max(afastamentoHorizontalMm, afastamentoVerticalMm))
+        var tentativas = 0
         var y = margemModuloMm
         while (y <= alturaMm) {
             var x = margemModuloMm
             while (x <= larguraMm) {
+                if (++tentativas > LIMITE_TENTATIVAS_BUSCA) return null
                 val candidato = modelo.copy(xMm = x.toDouble(), yMm = y.toDouble(), travada = false)
                 if (instanciaValida(candidato, -1)) return candidato
                 x += passoBusca
@@ -676,9 +1058,11 @@ fun EncaixeConsumoScreen(
             val limiteX = larguraMm - margemModuloMm - larguraGrupo
             val limiteY = alturaMm - margemModuloMm - alturaGrupo
             var y = margemModuloMm
+            var tentativas = 0
             busca@ while (y <= limiteY + 0.001f) {
                 var x = margemModuloMm
                 while (x <= limiteX + 0.001f) {
+                    if (++tentativas > LIMITE_TENTATIVAS_BUSCA) break@busca
                     val candidatas = criarCopias(x - esquerdaGrupo, y - topoGrupo)
                     if (grupoDuplicadoValido(candidatas)) {
                         copiasEncontradas = candidatas
@@ -707,6 +1091,20 @@ fun EncaixeConsumoScreen(
         }
     }
 
+    fun excluirSelecionados() {
+        val indicesExcluir = (if (selecionados.isNotEmpty()) selecionados else setOf(selecionado))
+            .filter { it in instancias.indices }
+            .toSet()
+        if (indicesExcluir.isEmpty()) return
+
+        instancias = instancias.filterIndexed { indice, _ -> indice !in indicesExcluir }
+        selecionados = emptySet()
+        selecionado = instancias.lastIndex.coerceAtLeast(0)
+        referenciaAlinhamento = if (instancias.size > 1) 1 else 0
+        guiasAlinhamento = emptyList()
+        mensagemPosicionamento = null
+    }
+
     fun adicionarBloco() {
         if (blocos.isEmpty()) return
         val novo = encontrarPosicaoLivre(InstanciaEncaixe(blocoParaAdicionar, 0.0, 0.0))
@@ -725,50 +1123,55 @@ fun EncaixeConsumoScreen(
     // disposição inteira, lado a lado, até não caber mais nenhuma repetição dentro da folha —
     // mantendo o mesmo afastamento já configurado entre repetições do padrão.
     fun preencherFolha() {
+        if (calculandoEncaixe) return
         if (instancias.isEmpty()) {
             mensagemPosicionamento = "Posicione ao menos um bloco antes de preencher a folha."
             return
         }
-        var minX = Float.MAX_VALUE
-        var minY = Float.MAX_VALUE
-        var maxX = -Float.MAX_VALUE
-        var maxY = -Float.MAX_VALUE
-        instancias.forEach { item ->
-            val base = blocos.getOrNull(item.blocoIndice) ?: return@forEach
-            pontosTransformados(item, base).forEach { p ->
-                minX = min(minX, p.x)
-                minY = min(minY, p.y)
-                maxX = max(maxX, p.x)
-                maxY = max(maxY, p.y)
-            }
-        }
-        if (minX > maxX) return
         val padraoOriginal = instancias.toList()
-        val tileLargura = (maxX - minX) + afastamentoHorizontalMm
-        val tileAltura = (maxY - minY) + afastamentoVerticalMm
-        if (tileLargura <= 0f || tileAltura <= 0f) return
-        var adicionados = 0
-        var yBase = minY
-        while (yBase + (maxY - minY) <= alturaMm - margemModuloMm + 0.01f) {
-            var xBase = minX
-            while (xBase + (maxX - minX) <= larguraMm - margemModuloMm + 0.01f) {
-                val deslocX = xBase - minX
-                val deslocY = yBase - minY
-                if (abs(deslocX) > 0.01f || abs(deslocY) > 0.01f) {
-                    val candidatos = padraoOriginal.map { it.copy(xMm = it.xMm + deslocX, yMm = it.yMm + deslocY, travada = false) }
-                    if (candidatos.all { instanciaValida(it, -1) }) {
-                        instancias = instancias + candidatos
-                        adicionados += candidatos.size
+        val blocosOriginais = blocos.toList()
+        val larguraOriginal = larguraMm
+        val alturaOriginal = alturaMm
+        val margemOriginal = margemModuloMm
+        val afastamentoHorizontalOriginal = afastamentoHorizontalMm
+        val afastamentoVerticalOriginal = afastamentoVerticalMm
+        calculandoEncaixe = true
+        mensagemPosicionamento = "Calculando preenchimento..."
+
+        escopoCalculo.launch {
+            try {
+                val resultado = withContext(Dispatchers.Default) {
+                    calcularPreenchimentoFolha(
+                        padraoOriginal = padraoOriginal,
+                        blocos = blocosOriginais,
+                        larguraMm = larguraOriginal,
+                        alturaMm = alturaOriginal,
+                        margemModuloMm = margemOriginal,
+                        afastamentoHorizontalMm = afastamentoHorizontalOriginal,
+                        afastamentoVerticalMm = afastamentoVerticalOriginal,
+                    )
+                }
+                if (instancias != padraoOriginal) {
+                    mensagemPosicionamento = "O encaixe mudou durante o cálculo. Toque em preencher novamente."
+                } else {
+                    instancias = resultado.instancias
+                    mensagemPosicionamento = when {
+                        resultado.limiteAtingido && resultado.adicionados > 0 ->
+                            "Folha preenchida com +${resultado.adicionados} blocos. O limite de segurança de $LIMITE_INSTANCIAS_PREENCHIMENTO peças foi aplicado."
+                        resultado.limiteAtingido ->
+                            "O limite de segurança do cálculo foi atingido. Reduza a folha ou aumente o padrão."
+                        resultado.adicionados > 0 ->
+                            "Folha preenchida: +${resultado.adicionados} bloco${if (resultado.adicionados == 1) "" else "s"} seguindo o padrão."
+                        else -> "Não havia espaço pra repetir o padrão dentro da folha."
                     }
                 }
-                xBase += tileLargura
+            } catch (cancelamento: CancellationException) {
+                throw cancelamento
+            } catch (_: Throwable) {
+                mensagemPosicionamento = "Não foi possível concluir o preenchimento. Ajuste o padrão e tente novamente."
+            } finally {
+                calculandoEncaixe = false
             }
-            yBase += tileAltura
-        }
-        mensagemPosicionamento = if (adicionados > 0) {
-            "Folha preenchida: +$adicionados bloco${if (adicionados == 1) "" else "s"} seguindo o padrão."
-        } else {
-            "Não havia espaço pra repetir o padrão dentro da folha."
         }
     }
 
@@ -776,32 +1179,62 @@ fun EncaixeConsumoScreen(
     // circule as peças dispostas na área de consumo". Calcula o retângulo delimitador (bounding
     // box) de TODAS as peças já posicionadas, desloca as peças pra encostar no afastamento mínimo
     // e redimensiona largura/altura pra abraçar exatamente esse conjunto.
-    fun ajustarRetanguloAoConteudo() {
-        if (instancias.isEmpty()) return
-        var minX = Float.MAX_VALUE
-        var minY = Float.MAX_VALUE
-        var maxX = -Float.MAX_VALUE
-        var maxY = -Float.MAX_VALUE
-        instancias.forEach { item ->
-            val base = blocos.getOrNull(item.blocoIndice) ?: return@forEach
-            pontosTransformados(item, base).forEach { p ->
-                minX = min(minX, p.x)
-                minY = min(minY, p.y)
-                maxX = max(maxX, p.x)
-                maxY = max(maxY, p.y)
+    fun ajustarRetanguloAoConteudo(corrigirAfastamentos: Boolean) {
+        if (instancias.isEmpty() || calculandoEncaixe) return
+        val instanciasOriginais = instancias.toList()
+        val blocosOriginais = blocos.toList()
+        val margemOriginal = margemModuloMm
+        val afastamentoHorizontalOriginal = afastamentoHorizontalMm
+        val afastamentoVerticalOriginal = afastamentoVerticalMm
+        calculandoEncaixe = true
+        mensagemPosicionamento = if (corrigirAfastamentos) {
+            "Corrigindo afastamentos e ajustando o retângulo..."
+        } else {
+            "Ajustando o retângulo às peças..."
+        }
+
+        escopoCalculo.launch {
+            try {
+                val resultado = withContext(Dispatchers.Default) {
+                    calcularAjusteRetangulo(
+                        originais = instanciasOriginais,
+                        blocos = blocosOriginais,
+                        margemModuloMm = margemOriginal,
+                        afastamentoHorizontalMm = afastamentoHorizontalOriginal,
+                        afastamentoVerticalMm = afastamentoVerticalOriginal,
+                        corrigirAfastamentos = corrigirAfastamentos,
+                    )
+                }
+                val configuracaoMudou = instancias != instanciasOriginais ||
+                    margemModuloMm != margemOriginal ||
+                    afastamentoHorizontalMm != afastamentoHorizontalOriginal ||
+                    afastamentoVerticalMm != afastamentoVerticalOriginal
+                if (configuracaoMudou) {
+                    mensagemPosicionamento = "A configuração mudou durante o ajuste. Tente novamente."
+                } else if (resultado == null) {
+                    mensagemPosicionamento = "Não foi possível corrigir automaticamente essa disposição."
+                } else {
+                    instancias = resultado.instancias
+                    larguraMm = resultado.larguraMm
+                    alturaMm = resultado.alturaMm
+                    larguraTexto = resultado.larguraMm.roundToInt().toString()
+                    alturaTexto = resultado.alturaMm.roundToInt().toString()
+                    tamanhoFolhaSelecionado = "Personalizada"
+                    guiasAlinhamento = emptyList()
+                    mensagemPosicionamento = if (resultado.afastamentosCorrigidos) {
+                        "Afastamentos corrigidos e retângulo ajustado. O encaixe está pronto para salvar."
+                    } else {
+                        "Retângulo ajustado às peças. Os afastamentos já estavam corretos."
+                    }
+                }
+            } catch (cancelamento: CancellationException) {
+                throw cancelamento
+            } catch (_: Throwable) {
+                mensagemPosicionamento = "Não foi possível concluir o ajuste automático."
+            } finally {
+                calculandoEncaixe = false
             }
         }
-        if (minX > maxX) return
-        val deslocX = margemModuloMm - minX
-        val deslocY = margemModuloMm - minY
-        instancias = instancias.map { it.copy(xMm = it.xMm + deslocX, yMm = it.yMm + deslocY) }
-        larguraMm = (maxX - minX) + 2 * margemModuloMm
-        alturaMm = (maxY - minY) + 2 * margemModuloMm
-        larguraTexto = larguraMm.roundToInt().toString()
-        alturaTexto = alturaMm.roundToInt().toString()
-        tamanhoFolhaSelecionado = "Personalizada"
-        guiasAlinhamento = emptyList()
-        mensagemPosicionamento = "Retângulo ajustado para circular as peças posicionadas."
     }
 
     var categoria by remember { mutableStateOf(CategoriaEncaixe.BLOCOS) }
@@ -811,6 +1244,23 @@ fun EncaixeConsumoScreen(
     var zoomCanvas by remember { mutableStateOf(1f) }
     var panCanvas by remember { mutableStateOf(Offset.Zero) }
     var modoZoomCanvas by remember { mutableStateOf(false) }
+
+    val salvamentoHabilitado = !salvando && instancias.isNotEmpty() && indicesComConflito.isEmpty()
+    fun salvarEncaixe() {
+        if (!salvamentoHabilitado) return
+        onConfirmado(
+            EncaixeConsumo(
+                tipo = tipo,
+                larguraMm = larguraMm.toDouble(),
+                alturaMm = alturaMm.toDouble(),
+                deslocamentoMm = if (tipo == TipoModuloEncaixe.PARALELOGRAMO) deslocamentoMm.toDouble() else 0.0,
+                afastamentoHorizontalMm = afastamentoHorizontalMm.toDouble(),
+                afastamentoVerticalMm = afastamentoVerticalMm.toDouble(),
+                instancias = instancias,
+                margemModuloMm = margemModuloMm.toDouble(),
+            ),
+        )
+    }
 
     Scaffold(
         containerColor = Fundo,
@@ -838,6 +1288,16 @@ fun EncaixeConsumoScreen(
                             )
                         }
                     }
+                    Button(
+                        onClick = { salvarEncaixe() },
+                        enabled = salvamentoHabilitado,
+                        modifier = Modifier.width(76.dp).height(38.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AzulDestaque),
+                    ) {
+                        Text(if (salvando) "..." else "Salvar", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
                     Surface(
                         modifier = Modifier.size(42.dp),
                         shape = RoundedCornerShape(14.dp),
@@ -1139,81 +1599,36 @@ fun EncaixeConsumoScreen(
                         vertical = if (painelFerramentasCompacto) 4.dp else 8.dp,
                     ),
                 ) {
-                    // Duas linhas fixas de categorias: não há rolagem horizontal nem títulos
-                    // cortados nas laterais.
-                    FlowRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFFF8FAFC))
-                            .border(1.dp, Borda, RoundedCornerShape(14.dp))
-                            .padding(4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        // A navegacao permanece fixa em duas linhas por tres categorias,
-                        // independentemente da largura escolhida para o painel lateral.
-                        maxItemsInEachRow = 3,
-                    ) {
-                        CategoriaEncaixe.entries.forEach { cat ->
-                            val titulo = when (cat) {
-                                CategoriaEncaixe.BLOCOS -> "Blocos"
-                                CategoriaEncaixe.SELECAO -> "Seleção"
-                                CategoriaEncaixe.TRANSFORMAR -> "Transformar"
-                                CategoriaEncaixe.VISUALIZACAO -> "Visualização"
-                                CategoriaEncaixe.RESULTADO -> "Resultado"
-                                CategoriaEncaixe.CONFIGURACOES -> "Config."
-                            }
-                            val icone = when (cat) {
-                                CategoriaEncaixe.BLOCOS -> Icons.Filled.ViewModule
-                                CategoriaEncaixe.SELECAO -> Icons.Filled.CropFree
-                                CategoriaEncaixe.TRANSFORMAR -> Icons.Filled.OpenWith
-                                CategoriaEncaixe.VISUALIZACAO -> Icons.Filled.PanTool
-                                CategoriaEncaixe.RESULTADO -> Icons.Filled.CheckBox
-                                CategoriaEncaixe.CONFIGURACOES -> Icons.Filled.Settings
-                            }
-                            Row(
-                                modifier = Modifier.weight(1f)
-                                    .height(if (painelFerramentasCompacto) 28.dp else 34.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (categoria == cat) AzulDestaque else Fundo)
-                                    .clickable {
-                                        categoria = cat
-                                        // Ao abrir Transformar, o dedo volta a atuar sobre os
-                                        // blocos (e nao sobre a prancheta), como indica Mover.
-                                        if (cat == CategoriaEncaixe.TRANSFORMAR || cat == CategoriaEncaixe.SELECAO) modoZoomCanvas = false
-                                        if (cat != CategoriaEncaixe.SELECAO) {
-                                            selecaoArrastoInicio = null
-                                            selecaoArrastoAtual = null
-                                        }
-                                    }
-                                    .padding(horizontal = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center,
-                            ) {
-                                // No painel estreito, o texto sozinho evita que os nomes das
-                                // categorias sejam espremidos, sem transformar a barra em coluna.
-                                if (!painelFerramentasCompacto) {
-                                    Icon(icone, contentDescription = null, tint = if (categoria == cat) Color.White else Texto, modifier = Modifier.size(if (painelFerramentasCompacto) 12.dp else 14.dp))
-                                    Spacer(modifier = Modifier.width(2.dp))
+                    if (!telaGirada) {
+                        BarraCategoriasEncaixe(
+                            categoria = categoria,
+                            compacta = painelFerramentasCompacto,
+                            modifier = Modifier.fillMaxWidth(),
+                            onSelecionar = { cat ->
+                                categoria = cat
+                                if (cat == CategoriaEncaixe.TRANSFORMAR || cat == CategoriaEncaixe.SELECAO) modoZoomCanvas = false
+                                if (cat != CategoriaEncaixe.SELECAO) {
+                                    selecaoArrastoInicio = null
+                                    selecaoArrastoAtual = null
                                 }
-                                Text(
-                                    titulo,
-                                    fontSize = if (painelFerramentasCompacto) 8.sp else 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (categoria == cat) Color.White else Texto,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
+                            },
+                        )
+                        Spacer(modifier = Modifier.height(if (painelFerramentasCompacto) 5.dp else 8.dp))
                     }
-                    Spacer(modifier = Modifier.height(if (painelFerramentasCompacto) 5.dp else 8.dp))
                     Column(
                         modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(if (painelFerramentasCompacto) 5.dp else 8.dp),
                     ) {
+                        CardCategoriaEncaixe(categoria) {
                         when (categoria) {
                             CategoriaEncaixe.BLOCOS -> {
                                 Text("Arraste os blocos para montar a repetição. Peças podem cruzar a borda quando o módulo for repetido.", fontSize = 10.sp, color = Texto.copy(alpha = 0.7f))
+                                CardSubconfiguracaoEncaixe(
+                                    Icons.Filled.ViewModule,
+                                    "Peças do encaixe",
+                                    "Escolha o bloco e adicione novas cópias",
+                                    cor = Color(0xFF16A34A),
+                                ) {
                                 FlowRow(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1221,20 +1636,51 @@ fun EncaixeConsumoScreen(
                                     maxItemsInEachRow = if (painelFerramentasCompacto) 1 else 3,
                                 ) {
                                     blocos.indices.forEach { indice ->
-                                        CartaoFerramenta("Bloco ${indice + 1}", blocoParaAdicionar == indice, Modifier) { blocoParaAdicionar = indice }
+                                        CartaoFerramenta("Bloco ${indice + 1}", blocoParaAdicionar == indice, Modifier, icone = Icons.Filled.ViewModule, cor = Color(0xFF16A34A)) { blocoParaAdicionar = indice }
                                     }
                                     CartaoFerramenta("Adicionar", false, icone = Icons.Filled.Add) { adicionarBloco() }
                                 }
+                                }
+                                CardSubconfiguracaoEncaixe(
+                                    Icons.Filled.OpenInFull,
+                                    "Ações de preenchimento",
+                                    "Duplicar a seleção ou completar a folha",
+                                    cor = Color(0xFF0F6CBD),
+                                ) {
                                 CartaoFerramenta(
                                     if (selecionados.size > 1) "Duplicar ${selecionados.size} blocos selecionados" else "Duplicar bloco selecionado",
                                     false,
                                     Modifier.fillMaxWidth(),
                                     icone = Icons.Filled.ContentCopy,
                                 ) { duplicarSelecionados() }
+                                CartaoFerramenta(
+                                    titulo = "Excluir blocos selecionados",
+                                    ativo = false,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    icone = Icons.Filled.Delete,
+                                    cor = Color(0xFFDC2626),
+                                    habilitado = instancias.isNotEmpty(),
+                                ) { excluirSelecionados() }
                                 // Pedido do Tiago: "crie uma opção em blocos de preencher área de
                                 // consumo após adicionar, e segue o padrão que está disposto até
                                 // preencher a área da folha com blocos".
-                                CartaoFerramenta("Preencher folha com este padrão", false, Modifier.fillMaxWidth(), icone = Icons.Filled.OpenInFull) { preencherFolha() }
+                                CartaoFerramenta(
+                                    titulo = if (calculandoEncaixe) "Calculando preenchimento..." else "Preencher folha com este padrão",
+                                    ativo = calculandoEncaixe,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    icone = Icons.Filled.OpenInFull,
+                                    habilitado = !calculandoEncaixe,
+                                ) { preencherFolha() }
+                                }
+                                CardAlinhamentoEncaixe(
+                                    quantidadeBlocos = instancias.size,
+                                    selecionado = selecionado,
+                                    selecaoMultipla = selecionados.size > 1,
+                                    referencia = referenciaAlinhamento,
+                                    onReferenciaChange = { referenciaAlinhamento = it },
+                                    onAlinhar = { alinharSelecionado(it) },
+                                    onLimparGuias = { guiasAlinhamento = emptyList() },
+                                )
                             }
                             // Pedido do Tiago: "crie em transformar/blocos, selecionar blocos,
                             // crie um popup ao clicar para selecionar o bloco desejado... para
@@ -1250,6 +1696,12 @@ fun EncaixeConsumoScreen(
                                     fontSize = 10.sp,
                                     color = Texto.copy(alpha = 0.7f),
                                 )
+                                CardSubconfiguracaoEncaixe(
+                                    Icons.Filled.CropFree,
+                                    "Modo de seleção",
+                                    "Selecionar pelo toque, arrasto ou lista",
+                                    cor = Color(0xFF2563EB),
+                                ) {
                                 FlowRow(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1283,7 +1735,14 @@ fun EncaixeConsumoScreen(
                                     Modifier.fillMaxWidth(),
                                     icone = Icons.Filled.CheckBox,
                                 ) { mostrarPopupSelecionarBlocos = true }
+                                }
                                 if (selecionados.isNotEmpty()) {
+                                    CardSubconfiguracaoEncaixe(
+                                        Icons.Filled.CheckBox,
+                                        "Itens selecionados",
+                                        "Toque em uma peça para removê-la da seleção",
+                                        cor = Color(0xFF16A34A),
+                                    ) {
                                     FlowRow(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1295,10 +1754,17 @@ fun EncaixeConsumoScreen(
                                         }
                                     }
                                     CartaoFerramenta("Limpar seleção", false, Modifier.fillMaxWidth(), icone = Icons.Filled.CheckBoxOutlineBlank) { selecionados = emptySet() }
+                                    }
                                 }
                             }
                             CategoriaEncaixe.VISUALIZACAO -> {
                                 Text("Mova a prancheta livremente ou amplie pra ajustar com mais precisão — pedido do Tiago: ferramentas de visualização iguais às do editor de facas.", fontSize = 10.sp, color = Texto.copy(alpha = 0.7f))
+                                CardSubconfiguracaoEncaixe(
+                                    Icons.Filled.PanTool,
+                                    "Modo de interação",
+                                    "Escolha entre mover peças ou navegar na folha",
+                                    cor = Color(0xFF0891B2),
+                                ) {
                                 FlowRow(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1308,6 +1774,13 @@ fun EncaixeConsumoScreen(
                                     CartaoFerramenta("Mover peça", !modoZoomCanvas, Modifier.weight(1f), icone = Icons.Filled.OpenWith) { modoZoomCanvas = false }
                                     CartaoFerramenta("Pan / Zoom", modoZoomCanvas, Modifier.weight(1f), icone = Icons.Filled.PanTool) { modoZoomCanvas = true }
                                 }
+                                }
+                                CardSubconfiguracaoEncaixe(
+                                    Icons.Filled.ZoomIn,
+                                    "Controle de zoom",
+                                    "Aumente, diminua ou restaure a visualização",
+                                    cor = Color(0xFF0F6CBD),
+                                ) {
                                 if (painelFerramentasCompacto) {
                                     Column(
                                         modifier = Modifier.fillMaxWidth(),
@@ -1326,6 +1799,7 @@ fun EncaixeConsumoScreen(
                                     }
                                 }
                                 CartaoFerramenta("Resetar zoom e posição", false, Modifier.fillMaxWidth(), icone = Icons.Filled.RestartAlt) { zoomCanvas = 1f; panCanvas = Offset.Zero }
+                                }
                             }
                             CategoriaEncaixe.TRANSFORMAR -> {
                                 if (selecionados.size > 1) {
@@ -1364,9 +1838,7 @@ fun EncaixeConsumoScreen(
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         CartaoFerramenta("Excluir selecionados", false, Modifier.weight(1f), icone = Icons.Filled.Delete, cor = Color(0xFFDC2626)) {
-                                            instancias = instancias.filterIndexed { indice, _ -> indice !in selecionados }
-                                            selecionados = emptySet()
-                                            selecionado = instancias.lastIndex.coerceAtLeast(0)
+                                            excluirSelecionados()
                                         }
                                         CartaoFerramenta("Limpar seleção", false, Modifier.weight(1f), icone = Icons.Filled.CheckBoxOutlineBlank) { selecionados = emptySet() }
                                     }
@@ -1410,36 +1882,8 @@ fun EncaixeConsumoScreen(
                                         ) { instancias = instancias.mapIndexed { indice, item -> if (indice == selecionado) item.copy(travada = !item.travada) else item } }
                                         CartaoFerramenta("Duplicar", false, Modifier.weight(1f), icone = Icons.Filled.ContentCopy) { duplicarSelecionados() }
                                         CartaoFerramenta("Excluir", false, Modifier.weight(1f), icone = Icons.Filled.Delete, cor = Color(0xFFDC2626)) {
-                                            if (instancias.size > 1) {
-                                                instancias = instancias.filterIndexed { indice, _ -> indice != selecionado }
-                                                selecionado = selecionado.coerceAtMost(instancias.lastIndex)
-                                            }
+                                            excluirSelecionados()
                                         }
-                                    }
-                                    if (instancias.size > 1) {
-                                        Text("ALINHAMENTO POR REFERÊNCIA", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Texto.copy(alpha = 0.55f))
-                                        Text("Bloco ${selecionado + 1} será alinhado com:", fontSize = 10.sp, color = Texto)
-                                        FlowRow(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                                            maxItemsInEachRow = 4,
-                                        ) {
-                                            instancias.indices.filter { it != selecionado }.forEach { indice ->
-                                                CartaoFerramenta("Bloco ${indice + 1}", referenciaAlinhamento == indice, Modifier) { referenciaAlinhamento = indice }
-                                            }
-                                        }
-                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            CartaoFerramenta("Esquerda", false, Modifier.weight(1f), icone = Icons.Filled.AlignHorizontalLeft) { alinharSelecionado("ESQUERDA") }
-                                            CartaoFerramenta("Centro X", false, Modifier.weight(1f), icone = Icons.Filled.AlignHorizontalCenter) { alinharSelecionado("CENTRO_X") }
-                                            CartaoFerramenta("Direita", false, Modifier.weight(1f), icone = Icons.Filled.AlignHorizontalRight) { alinharSelecionado("DIREITA") }
-                                        }
-                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            CartaoFerramenta("Topo", false, Modifier.weight(1f), icone = Icons.Filled.AlignVerticalTop) { alinharSelecionado("TOPO") }
-                                            CartaoFerramenta("Centro Y", false, Modifier.weight(1f), icone = Icons.Filled.AlignVerticalCenter) { alinharSelecionado("CENTRO_Y") }
-                                            CartaoFerramenta("Base", false, Modifier.weight(1f), icone = Icons.Filled.AlignVerticalBottom) { alinharSelecionado("BASE") }
-                                        }
-                                        CartaoFerramenta("Limpar linhas de alinhamento", false, Modifier.fillMaxWidth(), icone = Icons.Filled.Remove) { guiasAlinhamento = emptyList() }
                                     }
                                 } else {
                                     Text("Toque numa peça na prancheta pra selecionar.", fontSize = 11.sp, color = Texto.copy(alpha = 0.6f))
@@ -1454,16 +1898,23 @@ fun EncaixeConsumoScreen(
                                         icone = Icons.Filled.ScreenRotation,
                                     ) { telaGirada = false }
                                 }
-                                CabecalhoSecaoEncaixe(Icons.Filled.ViewModule, "Tipo de módulo", "Retângulo ou paralelogramo")
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    CartaoFerramenta("Retângulo", tipo == TipoModuloEncaixe.RETANGULO, Modifier.weight(1f), icone = Icons.Filled.CropSquare) { tipo = TipoModuloEncaixe.RETANGULO }
-                                    CartaoFerramenta("Paralelogramo", tipo == TipoModuloEncaixe.PARALELOGRAMO, Modifier.weight(1f), icone = Icons.Filled.CropSquare) { tipo = TipoModuloEncaixe.PARALELOGRAMO }
+                                CardSubconfiguracaoEncaixe(
+                                    Icons.Filled.ViewModule,
+                                    "Tipo de módulo",
+                                    "Retângulo ou paralelogramo",
+                                    cor = Color(0xFF16A34A),
+                                ) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        CartaoFerramenta("Retângulo", tipo == TipoModuloEncaixe.RETANGULO, Modifier.weight(1f), icone = Icons.Filled.CropSquare, cor = Color(0xFF16A34A)) { tipo = TipoModuloEncaixe.RETANGULO }
+                                        CartaoFerramenta("Paralelogramo", tipo == TipoModuloEncaixe.PARALELOGRAMO, Modifier.weight(1f), icone = Icons.Filled.CropSquare, cor = Color(0xFF0891B2)) { tipo = TipoModuloEncaixe.PARALELOGRAMO }
+                                    }
                                 }
-                                CabecalhoSecaoEncaixe(
+                                CardSubconfiguracaoEncaixe(
                                     Icons.Filled.Straighten,
                                     if (tipo == TipoModuloEncaixe.RETANGULO) "Dimensões do retângulo" else "Dimensões do paralelogramo",
                                     "Largura, altura e tamanho da folha",
-                                )
+                                    cor = Color(0xFF0F6CBD),
+                                ) {
                                 LinhaDimensao("Largura", larguraTexto, onAjusteFino = { delta ->
                                     val novo = (larguraMm + delta).coerceIn(100f, 5000f)
                                     larguraMm = novo
@@ -1495,83 +1946,118 @@ fun EncaixeConsumoScreen(
                                     }
                                 }
                                 if (tipo == TipoModuloEncaixe.RETANGULO) {
-                                    CartaoFerramenta("Ajustar retângulo às peças posicionadas", false, Modifier.fillMaxWidth(), icone = Icons.Filled.OpenInFull) { ajustarRetanguloAoConteudo() }
+                                    CartaoFerramenta(
+                                        titulo = "Ajustar somente o retângulo às peças",
+                                        ativo = false,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        icone = Icons.Filled.CropSquare,
+                                        habilitado = !calculandoEncaixe,
+                                    ) { ajustarRetanguloAoConteudo(corrigirAfastamentos = false) }
+                                    CartaoFerramenta(
+                                        titulo = if (calculandoEncaixe) "Ajustando..." else "Corrigir afastamentos e ajustar retângulo",
+                                        ativo = calculandoEncaixe,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        icone = Icons.Filled.OpenInFull,
+                                        cor = Color(0xFF16A34A),
+                                        habilitado = !calculandoEncaixe,
+                                    ) { ajustarRetanguloAoConteudo(corrigirAfastamentos = true) }
                                 }
-                                CabecalhoSecaoEncaixe(Icons.Filled.CropSquare, "Tamanho da folha", "Dimensões prontas ou personalizada")
-                                FlowRow(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    maxItemsInEachRow = 3,
+                                }
+                                CardSubconfiguracaoEncaixe(
+                                    Icons.Filled.CropSquare,
+                                    "Tamanho da folha",
+                                    "Dimensões prontas ou personalizada",
+                                    cor = Color(0xFF0891B2),
                                 ) {
-                                    TamanhosFolha.forEach { tamanho ->
-                                        CartaoFerramenta(tamanho.nome, tamanhoFolhaSelecionado == tamanho.nome, Modifier) { aplicarTamanhoFolha(tamanho) }
+                                    FlowRow(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                                        maxItemsInEachRow = if (painelFerramentasCompacto) 2 else 3,
+                                    ) {
+                                        TamanhosFolha.forEach { tamanho ->
+                                            CartaoFerramenta(tamanho.nome, tamanhoFolhaSelecionado == tamanho.nome, Modifier, icone = Icons.Filled.CropSquare, cor = Color(0xFF0891B2)) { aplicarTamanhoFolha(tamanho) }
+                                        }
+                                        CartaoFerramenta("Personalizada", tamanhoFolhaSelecionado == "Personalizada", Modifier, icone = Icons.Filled.Straighten, cor = Color(0xFFF97316)) { tamanhoFolhaSelecionado = "Personalizada" }
                                     }
-                                    CartaoFerramenta("Personalizada", tamanhoFolhaSelecionado == "Personalizada", Modifier) { tamanhoFolhaSelecionado = "Personalizada" }
                                 }
                                 // Pedido do Tiago: "o afastamento mínimo entre blocos deve ter
                                 // valor para as laterais e acima e abaixo" — dois sliders em vez
                                 // de um só, cada um no eixo que o nome já diz.
-                                CabecalhoSecaoEncaixe(Icons.Filled.OpenInFull, "Afastamentos", "Entre blocos e da borda da folha")
-                                Text("LATERAIS (ESQUERDA/DIREITA)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Texto.copy(alpha = 0.55f))
-                                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Slider(
-                                        value = afastamentoHorizontalMm,
-                                        onValueChange = { afastamentoHorizontalMm = it.roundToInt().toFloat(); guiasAlinhamento = emptyList() },
-                                        valueRange = 0f..50f,
-                                        steps = 49,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Text("${afastamentoHorizontalMm.roundToInt()} mm", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Texto)
+                                CardSubconfiguracaoEncaixe(
+                                    Icons.Filled.OpenInFull,
+                                    "Distâncias entre blocos",
+                                    "Laterais e acima/abaixo; não alteram o retângulo",
+                                    cor = Color(0xFFF97316),
+                                ) {
+                                ControleDistancia(
+                                    titulo = "LATERAIS ENTRE BLOCOS (ESQUERDA/DIREITA)",
+                                    valor = afastamentoHorizontalMm,
+                                    cor = Color(0xFFF97316),
+                                ) { valor ->
+                                    afastamentoHorizontalMm = valor
+                                    guiasAlinhamento = emptyList()
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     listOf(2f, 5f, 10f, 20f).forEach { valor ->
-                                        CartaoFerramenta("${valor.roundToInt()} mm", afastamentoHorizontalMm == valor, Modifier) { afastamentoHorizontalMm = valor; guiasAlinhamento = emptyList() }
+                                        CartaoFerramenta("${valor.roundToInt()} mm", afastamentoHorizontalMm == valor, Modifier, icone = Icons.Filled.Straighten, cor = Color(0xFFF97316)) { afastamentoHorizontalMm = valor; guiasAlinhamento = emptyList() }
                                     }
                                 }
-                                Text("ACIMA/ABAIXO", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Texto.copy(alpha = 0.55f))
-                                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Slider(
-                                        value = afastamentoVerticalMm,
-                                        onValueChange = { afastamentoVerticalMm = it.roundToInt().toFloat(); guiasAlinhamento = emptyList() },
-                                        valueRange = 0f..50f,
-                                        steps = 49,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Text("${afastamentoVerticalMm.roundToInt()} mm", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Texto)
+                                ControleDistancia(
+                                    titulo = "ACIMA/ABAIXO ENTRE BLOCOS",
+                                    valor = afastamentoVerticalMm,
+                                    cor = Color(0xFF0891B2),
+                                ) { valor ->
+                                    afastamentoVerticalMm = valor
+                                    guiasAlinhamento = emptyList()
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     listOf(2f, 5f, 10f, 20f).forEach { valor ->
-                                        CartaoFerramenta("${valor.roundToInt()} mm", afastamentoVerticalMm == valor, Modifier) { afastamentoVerticalMm = valor; guiasAlinhamento = emptyList() }
+                                        CartaoFerramenta("${valor.roundToInt()} mm", afastamentoVerticalMm == valor, Modifier, icone = Icons.Filled.Straighten, cor = Color(0xFF0891B2)) { afastamentoVerticalMm = valor; guiasAlinhamento = emptyList() }
                                     }
+                                }
+                                Text(
+                                    "Esses valores são aplicados somente entre os blocos.",
+                                    fontSize = 9.sp,
+                                    color = Texto.copy(alpha = 0.62f),
+                                )
                                 }
                                 // Pedido do Tiago: "distância mínima da linha do retângulo ou
                                 // paralelogramo aos blocos" — margem entre a borda do módulo e
                                 // qualquer peça encostada nela (diferente do afastamento ENTRE
                                 // blocos acima).
-                                Text("DISTÂNCIA MÍNIMA DA BORDA DA FOLHA AOS BLOCOS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Texto.copy(alpha = 0.55f))
-                                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Slider(
-                                        value = margemModuloMm,
-                                        onValueChange = { margemModuloMm = it.roundToInt().toFloat() },
-                                        valueRange = 0f..50f,
-                                        steps = 49,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Text("${margemModuloMm.roundToInt()} mm", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Texto)
+                                CardSubconfiguracaoEncaixe(
+                                    Icons.Filled.CropSquare,
+                                    "Margem da borda",
+                                    "Distância exclusiva entre o retângulo e os blocos",
+                                    cor = Color(0xFF16A34A),
+                                ) {
+                                ControleDistancia(
+                                    titulo = "BORDA DO RETÂNGULO AOS BLOCOS",
+                                    valor = margemModuloMm,
+                                    cor = Color(0xFF16A34A),
+                                ) { valor -> margemModuloMm = valor }
                                 }
                                 if (indicesComConflito.isNotEmpty()) {
                                     Text("Existem blocos fora da folha ou mais próximos que o permitido. Eles estão marcados em vermelho.", fontSize = 10.sp, color = Color(0xFFDC2626), fontWeight = FontWeight.Bold)
                                 }
                             }
                             CategoriaEncaixe.RESULTADO -> {
-                                Text("Área real dos blocos: ${"%.1f".format(areaRealMm2)} mm²", color = Texto, fontSize = 12.sp)
-                                Text("Folha: ${larguraMm.roundToInt()} × ${alturaMm.roundToInt()} mm", color = Texto, fontSize = 12.sp)
-                                Text("Área da folha: ${"%.1f".format(areaModuloMm2)} mm²", color = Texto, fontSize = 12.sp)
-                                Text("Afastamento mínimo — laterais: ${afastamentoHorizontalMm.roundToInt()} mm, acima/abaixo: ${afastamentoVerticalMm.roundToInt()} mm", color = Texto, fontSize = 12.sp)
-                                Text("${instancias.size} blocos por folha", color = Texto, fontSize = 12.sp)
-                                Text("Consumo: ${"%.1f".format(consumoMm2)} mm²/bloco (${"%.6f".format(consumoMm2 / 1_000_000.0)} m²)", color = Color(0xFF047857), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    maxItemsInEachRow = if (painelFerramentasCompacto) 1 else 2,
+                                ) {
+                                    CardMetricaResultado(Icons.Filled.ViewModule, "Área real dos blocos", "${"%.1f".format(areaRealMm2)} mm²", Color(0xFF16A34A), Modifier.weight(1f))
+                                    CardMetricaResultado(Icons.Filled.CropSquare, "Dimensões da folha", "${larguraMm.roundToInt()} × ${alturaMm.roundToInt()} mm", Color(0xFF0F6CBD), Modifier.weight(1f))
+                                    CardMetricaResultado(Icons.Filled.OpenInFull, "Área da folha", "${"%.1f".format(areaModuloMm2)} mm²", Color(0xFF0891B2), Modifier.weight(1f))
+                                    CardMetricaResultado(Icons.Filled.Straighten, "Afastamento mínimo", "${afastamentoHorizontalMm.roundToInt()} × ${afastamentoVerticalMm.roundToInt()} mm", Color(0xFFF97316), Modifier.weight(1f))
+                                    CardMetricaResultado(Icons.Filled.CheckBox, "Peças por folha", "${instancias.size} blocos", Color(0xFF2563EB), Modifier.weight(1f))
+                                    CardMetricaResultado(Icons.Filled.CheckBox, "Consumo por bloco", "${"%.1f".format(consumoMm2)} mm² · ${"%.6f".format(consumoMm2 / 1_000_000.0)} m²", Color(0xFF059669), Modifier.weight(1f))
+                                }
                             }
+                        }
                         }
                     }
                 }
@@ -1586,25 +2072,6 @@ fun EncaixeConsumoScreen(
                 )
             }
             erro?.let { Text(it, color = Color(0xFFB91C1C), modifier = Modifier.padding(horizontal = 12.dp)) }
-            Button(
-                onClick = {
-                    onConfirmado(
-                        EncaixeConsumo(
-                            tipo = tipo,
-                            larguraMm = larguraMm.toDouble(),
-                            alturaMm = alturaMm.toDouble(),
-                            deslocamentoMm = if (tipo == TipoModuloEncaixe.PARALELOGRAMO) deslocamentoMm.toDouble() else 0.0,
-                            afastamentoHorizontalMm = afastamentoHorizontalMm.toDouble(),
-                            afastamentoVerticalMm = afastamentoVerticalMm.toDouble(),
-                            instancias = instancias,
-                        ),
-                    )
-                },
-                enabled = !salvando && instancias.isNotEmpty() && indicesComConflito.isEmpty(),
-                modifier = Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 12.dp, vertical = 6.dp),
-                shape = RoundedCornerShape(50),
-                colors = ButtonDefaults.buttonColors(containerColor = AzulDestaque),
-            ) { Text(if (salvando) "Salvando..." else "✓ Salvar encaixe e consumo", fontWeight = FontWeight.Bold) }
             }
             }
             }
@@ -1613,29 +2080,56 @@ fun EncaixeConsumoScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
+                        .statusBarsPadding()
                         .onSizeChanged { tamanhoAreaPaisagem = it },
                 ) {
-                    Column(modifier = Modifier.weight(fracaoVisualizacaoPaisagem).fillMaxHeight()) {
-                        Surface(color = Color.White, shadowElevation = 2.dp) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                    Column(
+                        modifier = Modifier
+                            .weight(fracaoVisualizacaoPaisagem)
+                            .fillMaxHeight(),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(45.dp)
+                                .padding(start = 4.dp, top = 2.dp, end = 4.dp),
+                        ) {
+                            Surface(
+                                modifier = Modifier.fillMaxSize(),
+                                shape = RoundedCornerShape(16.dp),
+                                color = Color.White,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Borda),
+                                shadowElevation = 1.dp,
                             ) {
-                                IconButton(onClick = onBack) {
-                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Encaixe e consumo", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Texto)
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("A área real permanece separada", fontSize = 10.sp, color = Texto.copy(alpha = 0.58f), maxLines = 1)
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            "• ${"%.1f".format(consumoMm2)} mm²/bloco",
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF047857),
-                                            maxLines = 1,
-                                        )
+                                Row(
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
+                                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Encaixe e consumo", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Texto)
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("A área real permanece separada", fontSize = 8.sp, color = Texto.copy(alpha = 0.58f), maxLines = 1)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                "• ${"%.1f".format(consumoMm2)} mm²/bloco",
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF047857),
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    }
+                                    Button(
+                                        onClick = { salvarEncaixe() },
+                                        enabled = salvamentoHabilitado,
+                                        modifier = Modifier.width(104.dp).height(34.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = AzulDestaque),
+                                    ) {
+                                        Text(if (salvando) "Salvando..." else "✓ Salvar", fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -1670,11 +2164,36 @@ fun EncaixeConsumoScreen(
                                 .background(if (painelFerramentasCompacto) AzulDestaque else Color(0xFF94A3B8)),
                         )
                     }
-                    conteudoFerramentasEncaixe(
-                        Modifier
+                    Column(
+                        modifier = Modifier
                             .weight(1f - fracaoVisualizacaoPaisagem)
                             .fillMaxHeight(),
-                    )
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(if (painelFerramentasCompacto) 80.dp else 92.dp)
+                                .padding(4.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            BarraCategoriasEncaixe(
+                                categoria = categoria,
+                                compacta = painelFerramentasCompacto,
+                                modifier = Modifier.fillMaxWidth(),
+                                onSelecionar = { cat ->
+                                    categoria = cat
+                                    if (cat == CategoriaEncaixe.TRANSFORMAR || cat == CategoriaEncaixe.SELECAO) modoZoomCanvas = false
+                                    if (cat != CategoriaEncaixe.SELECAO) {
+                                        selecaoArrastoInicio = null
+                                        selecaoArrastoAtual = null
+                                    }
+                                },
+                            )
+                        }
+                        conteudoFerramentasEncaixe(
+                            Modifier.weight(1f).fillMaxWidth(),
+                        )
+                    }
                 }
             } else {
                 conteudoPrancheta(Modifier.height(280.dp).fillMaxWidth())
@@ -1724,21 +2243,208 @@ fun EncaixeConsumoScreen(
     }
 }
 
+@Composable
+private fun CardCategoriaEncaixe(
+    categoria: CategoriaEncaixe,
+    conteudo: @Composable () -> Unit,
+) {
+    val compacto = LocalFerramentasCompactas.current
+    val cor = corCategoriaEncaixe(categoria)
+    val subtitulo = when (categoria) {
+        CategoriaEncaixe.BLOCOS -> "Adicionar, duplicar e preencher a folha"
+        CategoriaEncaixe.SELECAO -> "Escolher uma ou várias peças"
+        CategoriaEncaixe.TRANSFORMAR -> "Mover, girar, alinhar e espelhar"
+        CategoriaEncaixe.VISUALIZACAO -> "Navegar e controlar o zoom"
+        CategoriaEncaixe.RESULTADO -> "Resumo do encaixe e do consumo"
+        CategoriaEncaixe.CONFIGURACOES -> "Módulo, dimensões e afastamentos"
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(if (compacto) 14.dp else 18.dp),
+        color = Color.White,
+        border = androidx.compose.foundation.BorderStroke(1.dp, cor.copy(alpha = 0.22f)),
+        shadowElevation = if (compacto) 0.dp else 1.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(if (compacto) 7.dp else 11.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compacto) 6.dp else 9.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(if (compacto) 28.dp else 34.dp)
+                        .clip(RoundedCornerShape(if (compacto) 9.dp else 11.dp))
+                        .background(cor.copy(alpha = 0.13f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        iconeCategoriaEncaixe(categoria),
+                        contentDescription = null,
+                        tint = cor,
+                        modifier = Modifier.size(if (compacto) 15.dp else 18.dp),
+                    )
+                }
+                Column(modifier = Modifier.padding(start = 8.dp)) {
+                    Text(
+                        tituloCategoriaEncaixe(categoria),
+                        fontSize = if (compacto) 11.sp else 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Texto,
+                    )
+                    Text(
+                        subtitulo,
+                        fontSize = if (compacto) 8.sp else 9.sp,
+                        color = Texto.copy(alpha = 0.58f),
+                        maxLines = 1,
+                    )
+                }
+            }
+            conteudo()
+        }
+    }
+}
+
 // Pedido do Tiago: "use esse print dessa tela para copiar os estilos de tela" (Expedição Bling)
 // — cabeçalho de seção com círculo de ícone + título em negrito + subtítulo cinza, igual aos
 // cards "Criar lista de separação"/"Vincular Produtos" daquela tela.
 @Composable
-private fun CabecalhoSecaoEncaixe(icone: ImageVector, titulo: String, subtitulo: String) {
-    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun CabecalhoSecaoEncaixe(icone: ImageVector, titulo: String, subtitulo: String, cor: Color = corDaFuncao(icone)) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(AzulDestaque.copy(alpha = 0.12f)),
+            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(cor.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icone, contentDescription = null, tint = AzulDestaque, modifier = Modifier.size(16.dp))
+            Icon(icone, contentDescription = null, tint = cor, modifier = Modifier.size(16.dp))
         }
         Column(modifier = Modifier.padding(start = 8.dp)) {
             Text(titulo, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Texto)
             Text(subtitulo, fontSize = 10.sp, color = Texto.copy(alpha = 0.55f))
+        }
+    }
+}
+
+@Composable
+private fun CardSubconfiguracaoEncaixe(
+    icone: ImageVector,
+    titulo: String,
+    subtitulo: String,
+    cor: Color = corDaFuncao(icone),
+    conteudo: @Composable () -> Unit,
+) {
+    val compacto = LocalFerramentasCompactas.current
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(if (compacto) 12.dp else 15.dp),
+        color = Color.White,
+        border = androidx.compose.foundation.BorderStroke(1.dp, cor.copy(alpha = 0.22f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(if (compacto) 7.dp else 10.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compacto) 5.dp else 8.dp),
+        ) {
+            CabecalhoSecaoEncaixe(icone, titulo, subtitulo, cor)
+            conteudo()
+        }
+    }
+}
+
+@Composable
+private fun CardMetricaResultado(
+    icone: ImageVector,
+    rotulo: String,
+    valor: String,
+    cor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val compacto = LocalFerramentasCompactas.current
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(if (compacto) 11.dp else 14.dp),
+        color = Color.White,
+        border = androidx.compose.foundation.BorderStroke(1.dp, cor.copy(alpha = 0.24f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(if (compacto) 7.dp else 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier.size(if (compacto) 27.dp else 32.dp).clip(RoundedCornerShape(9.dp)).background(cor.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icone, contentDescription = null, tint = cor, modifier = Modifier.size(if (compacto) 14.dp else 17.dp))
+            }
+            Column(modifier = Modifier.padding(start = 7.dp).weight(1f)) {
+                Text(rotulo, fontSize = if (compacto) 8.sp else 9.sp, color = Texto.copy(alpha = 0.58f), maxLines = 1)
+                Text(valor, fontSize = if (compacto) 10.sp else 12.sp, fontWeight = FontWeight.Bold, color = Texto)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CardAlinhamentoEncaixe(
+    quantidadeBlocos: Int,
+    selecionado: Int,
+    selecaoMultipla: Boolean,
+    referencia: Int,
+    onReferenciaChange: (Int) -> Unit,
+    onAlinhar: (String) -> Unit,
+    onLimparGuias: () -> Unit,
+) {
+    val compacto = LocalFerramentasCompactas.current
+    CardSubconfiguracaoEncaixe(
+        Icons.Filled.AlignHorizontalCenter,
+        "Alinhamento por referência",
+        "Alinhar uma peça pelas bordas ou pelo centro",
+        cor = Color(0xFF0284C7),
+    ) {
+        when {
+            quantidadeBlocos < 2 -> Text(
+                "Adicione pelo menos mais um bloco para usar o alinhamento.",
+                fontSize = if (compacto) 9.sp else 10.sp,
+                color = Texto.copy(alpha = 0.68f),
+            )
+            selecaoMultipla -> Text(
+                "Mantenha somente um bloco selecionado para alinhá-lo com uma referência.",
+                fontSize = if (compacto) 9.sp else 10.sp,
+                color = Texto.copy(alpha = 0.68f),
+            )
+            selecionado !in 0 until quantidadeBlocos -> Text(
+                "Selecione um bloco na visualização para ativar o alinhamento.",
+                fontSize = if (compacto) 9.sp else 10.sp,
+                color = Texto.copy(alpha = 0.68f),
+            )
+            else -> {
+                Text("BLOCO DE REFERÊNCIA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Texto.copy(alpha = 0.55f))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    maxItemsInEachRow = if (compacto) 2 else 4,
+                ) {
+                    (0 until quantidadeBlocos).filter { it != selecionado }.forEach { indice ->
+                        CartaoFerramenta(
+                            "Bloco ${indice + 1}",
+                            referencia == indice,
+                            Modifier,
+                            icone = Icons.Filled.ViewModule,
+                            cor = Color(0xFF16A34A),
+                        ) { onReferenciaChange(indice) }
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    CartaoFerramenta("Esquerda", false, Modifier.weight(1f), icone = Icons.Filled.AlignHorizontalLeft) { onAlinhar("ESQUERDA") }
+                    CartaoFerramenta("Centro X", false, Modifier.weight(1f), icone = Icons.Filled.AlignHorizontalCenter) { onAlinhar("CENTRO_X") }
+                    CartaoFerramenta("Direita", false, Modifier.weight(1f), icone = Icons.Filled.AlignHorizontalRight) { onAlinhar("DIREITA") }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    CartaoFerramenta("Topo", false, Modifier.weight(1f), icone = Icons.Filled.AlignVerticalTop) { onAlinhar("TOPO") }
+                    CartaoFerramenta("Centro Y", false, Modifier.weight(1f), icone = Icons.Filled.AlignVerticalCenter) { onAlinhar("CENTRO_Y") }
+                    CartaoFerramenta("Base", false, Modifier.weight(1f), icone = Icons.Filled.AlignVerticalBottom) { onAlinhar("BASE") }
+                }
+                CartaoFerramenta("Limpar linhas de alinhamento", false, Modifier.fillMaxWidth(), icone = Icons.Filled.Remove, onClick = onLimparGuias)
+            }
         }
     }
 }
@@ -1749,30 +2455,26 @@ private fun OpcoesTransformacaoRapida(
     onInverter: () -> Unit,
     onDefinirAngulo: (Double) -> Unit,
 ) {
-    Text(
-        "TRANSFORMACOES RAPIDAS",
-        fontSize = 9.sp,
-        fontWeight = FontWeight.Bold,
-        color = Texto.copy(alpha = 0.55f),
-    )
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        CartaoFerramenta("Espelhar", false, Modifier.weight(1f), icone = Icons.Filled.Flip, onClick = onEspelhar)
-        CartaoFerramenta("Inverter", false, Modifier.weight(1f), icone = Icons.Filled.SwapVert, onClick = onInverter)
-    }
-    Text(
-        "GIRAR PARA",
-        fontSize = 9.sp,
-        fontWeight = FontWeight.Bold,
-        color = Texto.copy(alpha = 0.55f),
-    )
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        listOf(45.0, 90.0, 180.0, 270.0).forEach { angulo ->
-            CartaoFerramenta(
-                "${angulo.roundToInt()}°",
-                false,
-                Modifier.weight(1f),
-                icone = Icons.Filled.RotateRight,
-            ) { onDefinirAngulo(angulo) }
+    CardSubconfiguracaoEncaixe(
+        Icons.Filled.Flip,
+        "Transformações rápidas",
+        "Espelhar, inverter ou definir um ângulo",
+        cor = Color(0xFFF97316),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CartaoFerramenta("Espelhar", false, Modifier.weight(1f), icone = Icons.Filled.Flip, onClick = onEspelhar)
+            CartaoFerramenta("Inverter", false, Modifier.weight(1f), icone = Icons.Filled.SwapVert, onClick = onInverter)
+        }
+        Text("GIRAR PARA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Texto.copy(alpha = 0.55f))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            listOf(45.0, 90.0, 180.0, 270.0).forEach { angulo ->
+                CartaoFerramenta(
+                    "${angulo.roundToInt()}°",
+                    false,
+                    Modifier.weight(1f),
+                    icone = Icons.Filled.RotateRight,
+                ) { onDefinirAngulo(angulo) }
+            }
         }
     }
 }
@@ -1804,7 +2506,7 @@ private fun SeletorPassoTransformacao(
         IconButton(
             onClick = { atualizar(valor - incremento) },
             modifier = Modifier.size(if (compacto) 32.dp else 36.dp).clip(CircleShape).background(Color.White).border(1.dp, Borda, CircleShape),
-        ) { Icon(Icons.Filled.Remove, contentDescription = "Diminuir passo", tint = Texto, modifier = Modifier.size(16.dp)) }
+        ) { Icon(Icons.Filled.Remove, contentDescription = "Diminuir passo", tint = Color(0xFFF97316), modifier = Modifier.size(16.dp)) }
         Surface(
             modifier = Modifier.padding(horizontal = 6.dp).width(if (compacto) 68.dp else 78.dp).height(if (compacto) 32.dp else 36.dp),
             shape = RoundedCornerShape(12.dp),
@@ -1818,8 +2520,14 @@ private fun SeletorPassoTransformacao(
         IconButton(
             onClick = { atualizar(valor + incremento) },
             modifier = Modifier.size(if (compacto) 32.dp else 36.dp).clip(CircleShape).background(Color.White).border(1.dp, Borda, CircleShape),
-        ) { Icon(Icons.Filled.Add, contentDescription = "Aumentar passo", tint = Texto, modifier = Modifier.size(16.dp)) }
+        ) { Icon(Icons.Filled.Add, contentDescription = "Aumentar passo", tint = Color(0xFF16A34A), modifier = Modifier.size(16.dp)) }
     }
+    CardSubconfiguracaoEncaixe(
+        if (moverAtivo) Icons.Filled.OpenWith else Icons.Filled.RotateRight,
+        "Precisão do ajuste",
+        if (moverAtivo) "Distância aplicada em cada toque" else "Ângulo aplicado em cada toque",
+        cor = if (moverAtivo) Color(0xFF0F6CBD) else Color(0xFFF97316),
+    ) {
     if (compacto) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -1850,6 +2558,7 @@ private fun SeletorPassoTransformacao(
             controles()
         }
     }
+    }
 }
 
 /** Mesmo controle compacto de ajuste fino usado no editor de facas. */
@@ -1860,6 +2569,12 @@ private fun ControleAjusteFinoBloco(
     onMover: (Float, Float) -> Unit,
     onRotacionar: (Float) -> Unit,
 ) {
+    CardSubconfiguracaoEncaixe(
+        if (moverAtivo) Icons.Filled.OpenWith else Icons.Filled.RotateRight,
+        if (moverAtivo) "Controle de movimento" else "Controle de rotação",
+        if (moverAtivo) "Ajuste a posição pelas setas" else "Gire para a esquerda ou direita",
+        cor = if (moverAtivo) Color(0xFF0891B2) else Color(0xFFF97316),
+    ) {
     if (moverAtivo) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -1902,6 +2617,7 @@ private fun ControleAjusteFinoBloco(
             BotaoAjusteFino(icone = Icons.Filled.RotateRight, descricao = "Rotacionar à direita") { onRotacionar(1f) }
         }
     }
+    }
 }
 
 @Composable
@@ -1922,7 +2638,7 @@ private fun BotaoAjusteFino(
         contentAlignment = Alignment.Center,
     ) {
         if (icone != null) {
-            Icon(icone, contentDescription = descricao, tint = if (habilitado) AzulDestaque else Texto.copy(alpha = 0.25f), modifier = Modifier.size(20.dp))
+            Icon(icone, contentDescription = descricao, tint = if (habilitado) corDaFuncao(icone) else Texto.copy(alpha = 0.25f), modifier = Modifier.size(20.dp))
         } else {
             Text(simbolo.orEmpty(), fontSize = 17.sp, color = if (habilitado) Texto else Texto.copy(alpha = 0.25f))
         }
@@ -1934,23 +2650,41 @@ private fun BotaoAjusteFino(
 // mesmo visual do popup "Ferramentas de Edição" do editor de etiquetas (LabelEditorView.tsx):
 // cantos quadrados-arredondados (não cápsula/pill), fundo cinza-claro neutro, ícone (quando tem)
 // em cima + rótulo embaixo, compacto pra mobile.
+private fun corDaFuncao(icone: ImageVector?): Color = when (icone) {
+    Icons.Filled.Add, Icons.Filled.CheckBox, Icons.Filled.TouchApp -> Color(0xFF16A34A)
+    Icons.Filled.Delete -> Color(0xFFDC2626)
+    Icons.Filled.RotateLeft, Icons.Filled.RotateRight, Icons.Filled.RestartAlt,
+    Icons.Filled.Flip, Icons.Filled.SwapVert -> Color(0xFFF97316)
+    Icons.Filled.PanTool, Icons.Filled.ZoomIn, Icons.Filled.ZoomOut,
+    Icons.Filled.ScreenRotation -> Color(0xFF0891B2)
+    Icons.Filled.Lock, Icons.Filled.LockOpen -> Color(0xFFD97706)
+    Icons.Filled.ContentCopy, Icons.Filled.OpenInFull -> Color(0xFF0F6CBD)
+    Icons.Filled.AlignHorizontalLeft, Icons.Filled.AlignHorizontalCenter,
+    Icons.Filled.AlignHorizontalRight, Icons.Filled.AlignVerticalTop,
+    Icons.Filled.AlignVerticalCenter, Icons.Filled.AlignVerticalBottom -> Color(0xFF0284C7)
+    else -> AzulDestaque
+}
+
 @Composable
 private fun CartaoFerramenta(
     titulo: String,
     ativo: Boolean,
     modifier: Modifier = Modifier,
     icone: ImageVector? = null,
-    cor: Color = AzulDestaque,
+    cor: Color? = null,
     habilitado: Boolean = true,
     onClick: () -> Unit,
 ) {
     val compacto = LocalFerramentasCompactas.current
+    val corAcao = cor ?: corDaFuncao(icone)
+    val forma = RoundedCornerShape(if (compacto) 9.dp else 12.dp)
     val modificadorBase = modifier
-        .clip(RoundedCornerShape(if (compacto) 9.dp else 12.dp))
-        .background(if (ativo) cor.copy(alpha = 0.16f) else Fundo)
+        .clip(forma)
+        .background(if (ativo) corAcao.copy(alpha = 0.14f) else Fundo)
+        .border(1.dp, if (ativo) corAcao.copy(alpha = 0.42f) else Borda, forma)
         .clickable(enabled = habilitado, onClick = onClick)
-    val corConteudo = if (!habilitado) Texto.copy(alpha = 0.3f) else if (ativo) cor else Color(0xFF1E3A8A)
-    val corIcone = if (!habilitado) Texto.copy(alpha = 0.3f) else if (ativo) cor else cor.copy(alpha = 0.85f)
+    val corConteudo = if (!habilitado) Texto.copy(alpha = 0.3f) else if (ativo) corAcao else Texto
+    val corIcone = if (!habilitado) Texto.copy(alpha = 0.3f) else corAcao
 
     if (compacto) {
         Row(
@@ -1959,7 +2693,12 @@ private fun CartaoFerramenta(
             horizontalArrangement = Arrangement.Center,
         ) {
             if (icone != null) {
-                Icon(icone, contentDescription = null, tint = corIcone, modifier = Modifier.size(13.dp))
+                Box(
+                    modifier = Modifier.size(22.dp).clip(RoundedCornerShape(7.dp)).background(corAcao.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(icone, contentDescription = null, tint = corIcone, modifier = Modifier.size(13.dp))
+                }
                 Spacer(Modifier.width(3.dp))
             }
             Text(
@@ -1978,7 +2717,12 @@ private fun CartaoFerramenta(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             if (icone != null) {
-                Icon(icone, contentDescription = null, tint = corIcone, modifier = Modifier.size(16.dp))
+                Box(
+                    modifier = Modifier.size(28.dp).clip(RoundedCornerShape(9.dp)).background(corAcao.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(icone, contentDescription = null, tint = corIcone, modifier = Modifier.size(16.dp))
+                }
             }
             Text(
                 titulo,
@@ -1992,6 +2736,66 @@ private fun CartaoFerramenta(
     }
 }
 
+@Composable
+private fun ControleDistancia(
+    titulo: String,
+    valor: Float,
+    cor: Color,
+    onValorChange: (Float) -> Unit,
+) {
+    val compacto = LocalFerramentasCompactas.current
+    Text(
+        titulo,
+        fontSize = if (compacto) 8.sp else 10.sp,
+        fontWeight = FontWeight.Bold,
+        color = Texto.copy(alpha = 0.62f),
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        IconButton(
+            onClick = { onValorChange((valor - 1f).coerceIn(0f, 50f)) },
+            enabled = valor > 0f,
+            modifier = Modifier
+                .size(if (compacto) 26.dp else 30.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(cor.copy(alpha = 0.1f))
+                .border(1.dp, cor.copy(alpha = 0.35f), RoundedCornerShape(9.dp)),
+        ) {
+            Icon(Icons.Filled.Remove, contentDescription = "Diminuir 1 mm", tint = cor, modifier = Modifier.size(14.dp))
+        }
+        Slider(
+            value = valor,
+            onValueChange = { onValorChange(it.roundToInt().toFloat()) },
+            valueRange = 0f..50f,
+            steps = 49,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(
+            onClick = { onValorChange((valor + 1f).coerceIn(0f, 50f)) },
+            enabled = valor < 50f,
+            modifier = Modifier
+                .size(if (compacto) 26.dp else 30.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(cor.copy(alpha = 0.1f))
+                .border(1.dp, cor.copy(alpha = 0.35f), RoundedCornerShape(9.dp)),
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "Aumentar 1 mm", tint = cor, modifier = Modifier.size(14.dp))
+        }
+        Text(
+            "${valor.roundToInt()} mm",
+            modifier = Modifier.width(if (compacto) 34.dp else 40.dp),
+            fontSize = if (compacto) 8.sp else 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = Texto,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+        )
+    }
+}
+
 /** Uma linha da "calculadora" de dimensões — pedido do Tiago: "opção de editar valores cada um
  * em sua linha dentro de um card, uma calculadora de inserção representando os lados". Rótulo do
  * lado à esquerda, campo de texto grande o bastante pra digitar com o dedo à direita, e (pedido
@@ -1999,19 +2803,21 @@ private fun CartaoFerramenta(
 @Composable
 private fun LinhaDimensao(titulo: String, valorTexto: String, onAjusteFino: (Float) -> Unit = {}, onValorChange: (String) -> Unit) {
     val compacto = LocalFerramentasCompactas.current
+    val forma = RoundedCornerShape(12.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(if (compacto) 44.dp else 50.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(forma)
             .background(Fundo)
+            .border(1.dp, Borda, forma)
             .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(titulo, fontSize = if (compacto) 9.sp else 11.sp, fontWeight = FontWeight.Bold, color = Texto, modifier = Modifier.weight(1f), maxLines = 1)
         IconButton(onClick = { onAjusteFino(-1f) }, modifier = Modifier.size(if (compacto) 26.dp else 30.dp)) {
-            Icon(Icons.Filled.Remove, contentDescription = "Diminuir 1mm", modifier = Modifier.size(14.dp))
+            Icon(Icons.Filled.Remove, contentDescription = "Diminuir 1mm", tint = Color(0xFFF97316), modifier = Modifier.size(14.dp))
         }
         OutlinedTextField(
             value = valorTexto,
@@ -2023,7 +2829,7 @@ private fun LinhaDimensao(titulo: String, valorTexto: String, onAjusteFino: (Flo
             modifier = Modifier.width(if (compacto) 82.dp else 108.dp).height(if (compacto) 40.dp else 44.dp),
         )
         IconButton(onClick = { onAjusteFino(1f) }, modifier = Modifier.size(if (compacto) 26.dp else 30.dp)) {
-            Icon(Icons.Filled.Add, contentDescription = "Aumentar 1mm", modifier = Modifier.size(14.dp))
+            Icon(Icons.Filled.Add, contentDescription = "Aumentar 1mm", tint = Color(0xFF16A34A), modifier = Modifier.size(14.dp))
         }
     }
 }
