@@ -11,6 +11,7 @@ import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import kotlin.math.abs
+import kotlin.math.max
 
 /** Extrai o contorno da faca a partir da imagem já corrigida por [PerspectiveCorrector] — espelha
  * o passo 4 da especificação ("Processamento de imagem: o app aplica threshold adaptativo e
@@ -30,6 +31,12 @@ object ContornoExtractor {
     /** Área mínima de contorno, em px², pra descartar ruído (poeira, sombra, reflexo) que a
      * detecção de borda capta junto com a peça — bem menor que qualquer faca de calçado real. */
     private const val AREA_MINIMA_PX = 200.0
+
+    /** Piso relativo de área para um furo ser aceito, como fração da área do contorno externo —
+     * ver comentário em [extrair] sobre textura de superfície gerando contornos filhos pequenos
+     * que não são furos reais. 1% de uma sola de ~22700 mm² (caso testado) já descarta os ~10
+     * artefatos de textura encontrados (todos abaixo de 0,3%), com folga. */
+    private const val FRACAO_MINIMA_FURO = 0.01
 
     /** Epsilon do approxPolyDP, como fração do perímetro — pedido do Tiago: "adicione quantos
      * pontos forem necessários para fazer os contornos de curva precisos". Douglas-Peucker
@@ -118,17 +125,22 @@ object ContornoExtractor {
 
         val externoMm = aproximarEConverter(contornos[indiceExterno], pxPorMm)
 
-        // Furos: só aceita contornos filhos com área entre AREA_MINIMA_PX e metade da área
+        // Furos: só aceita contornos filhos com área entre areaMinimaFuro e metade da área
         // externa — a dilatação da borda (acima) pode criar um "anel" artificial bem fino
         // (borda interna + externa da MESMA linha espessada), que apareceria como filho na
         // hierarquia sem ser um furo real; o teto de 50% é uma defesa simples contra esse
-        // artefato. Ainda não testado com uma faca real com furo — ajustar se necessário.
+        // artefato. areaMinimaFuro escala com o tamanho da peça (FRACAO_MINIMA_FURO) em vez de
+        // usar só o piso fixo AREA_MINIMA_PX — confirmado com uma peça real (sola de calçado)
+        // que a textura/relevo da superfície (não furos) gera até ~10 contornos filhos pequenos
+        // (todos abaixo de 0,3% da área externa); o piso relativo descarta esses artefatos sem
+        // exigir que o usuário informe o tamanho mínimo de um furo real.
+        val areaMinimaFuro = max(AREA_MINIMA_PX, maiorArea * FRACAO_MINIMA_FURO)
         val furosMm = mutableListOf<List<Ponto>>()
         for (i in contornos.indices) {
             val parent = hierarquia.get(0, i)?.getOrNull(3)?.toInt() ?: -1
             if (parent != indiceExterno) continue
             val areaFuro = Imgproc.contourArea(contornos[i])
-            if (areaFuro < AREA_MINIMA_PX || areaFuro > maiorArea * 0.5) continue
+            if (areaFuro < areaMinimaFuro || areaFuro > maiorArea * 0.5) continue
             furosMm.add(aproximarEConverter(contornos[i], pxPorMm))
         }
 
